@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { isAddress, type Address } from "viem";
+import { useRagequit } from "@/hooks/useRagequit";
 import type { ShadowTrade } from "@/hooks/useShadowTrade";
 import { TOKENS, type Venue } from "@/lib/config";
+import { formatToken } from "@/lib/format";
 
 // Testnet collateral is admin-minted by each venue; there is no public faucet.
 const TOKEN_SOURCES: Record<Venue, { hint: string; cta: string; url: string }> = {
@@ -149,6 +151,35 @@ export function WithdrawForm({ app, venue, busy }: { app: ShadowTrade; venue: Ve
           setAmount("");
         }}
       />
+      <UnapprovedDeposits app={app} venue={venue} busy={busy} />
+    </div>
+  );
+}
+
+/** Deposits the ASP hasn't approved can't be spent privately; the depositor can always take them back, publicly. */
+export function UnapprovedDeposits({ app, venue, busy }: { app: ShadowTrade; venue: Venue; busy: boolean }) {
+  const { stuck, exit } = useRagequit(app, venue);
+  if (stuck.length === 0) return null;
+  const token = TOKENS[venue];
+  return (
+    <div className="mt-2 space-y-2 rounded-md border border-border bg-surface-2 p-3 text-xs leading-relaxed">
+      <p className="font-medium">Not approved yet</p>
+      <p className="text-muted">These deposits can&apos;t be spent privately until they are approved.</p>
+      {stuck.map((note) => (
+        <div key={note.label.toString()} className="flex items-center justify-between gap-3">
+          <span className="tabular font-mono text-[13px]">
+            {formatToken(note.value, token.decimals)} {token.symbol}
+          </span>
+          <button
+            onClick={() => exit(note)}
+            disabled={busy}
+            className="h-8 rounded-md border border-border px-3 text-[12px] font-semibold transition-colors hover:border-warning hover:text-warning disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Exit publicly
+          </button>
+        </div>
+      ))}
+      <p className="text-warning">Exiting returns the funds to the wallet that deposited them, in public. There is no privacy on this path.</p>
     </div>
   );
 }

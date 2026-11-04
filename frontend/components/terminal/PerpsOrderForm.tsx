@@ -59,13 +59,19 @@ function hypothetical(side: Side, lots: bigint, mark: bigint, margin: bigint): P
   return { side, sizeLots: lots, entryPNS: mark, marginCNS: margin, pnlCNS: 0n, markPNS: mark };
 }
 
-function blockReason(o: { busy: boolean; hasAccount: boolean; collateral: bigint; free: bigint; lots: bigint; notional: number; mark: bigint | null }) {
+/** Largest collateral whose margin plus taker fee (charged on collateral x leverage) still fits in `free`. */
+function maxCollateral(free: bigint, leverage: number, takerFeeBps: number): bigint {
+  return BigInt(Math.floor((Number(free) * 10_000) / (10_000 + leverage * takerFeeBps)));
+}
+
+function blockReason(o: { busy: boolean; hasAccount: boolean; collateral: bigint; feeCNS: bigint; free: bigint; lots: bigint; notional: number; mark: bigint | null }) {
   if (o.busy) return "Working…";
   if (!o.hasAccount || o.mark === null) return "Loading market…";
   if (o.collateral <= 0n) return "Enter an amount";
   if (o.collateral > o.free) return "Amount exceeds free balance";
   if (o.lots <= 0n) return "Size too small";
   if (o.notional < MIN_NOTIONAL) return "Below minimum order";
+  if (o.collateral + o.feeCNS > o.free) return "Not enough balance for margin + fee";
   return null;
 }
 
@@ -105,8 +111,10 @@ export function PerpsOrderForm({
   const lev = Math.min(leverage, market.maxLeverage);
 
   const owner = session.burner.address;
-  const account = usePoll(() => getAccount(owner), 3000, owner).data;
-  const polledMark = usePoll(() => getMarkPrice(market.id), 2000, String(market.id)).data;
+  const accountPoll = usePoll(() => getAccount(owner), 3000, owner);
+  const account = accountPoll.data;
+  const markPoll = usePoll(() => getMarkPrice(market.id), 2000, String(market.id));
+  const polledMark = markPoll.data;
   const free = account?.balanceCNS ?? 0n;
   const collateral = parseCollateral(amount);
 
@@ -118,9 +126,13 @@ export function PerpsOrderForm({
   const size = toSize(market, lots);
   const notional = mark !== null ? size * toPrice(market, mark) : 0;
   const fee = (notional * market.takerFeeBps) / 10_000;
-  const liq = mark !== null && lots > 0n ? liquidationPrice(market, hypothetical(side, lots, mark, collateral)) : null;
+  const feeCNS = BigInt(Math.ceil(fee * CNS));
+  // Margin actually posted for the floored lots, so the estimate matches the post-trade position.
+  const marginCNS = BigInt(Math.round((notional * CNS) / lev));
+  const liq = mark !== null && lots > 0n ? liquidationPrice(market, hypothetical(side, lots, mark, marginCNS)) : null;
+  const loadError = (account === null ? accountPoll.error : null) ?? (polledMark === null ? markPoll.error : null);
 
-  const reason = blockReason({ busy, hasAccount: account !== null, collateral, free, lots, notional, mark: polledMark });
+  const reason = blockReason({ busy, hasAccount: account !== null, collateral, feeCNS, free, lots, notional, mark: polledMark });
   const isLong = side === "long";
   const over = account !== null && collateral > free;
   const tooSmall = !over && lots > 0n && notional < MIN_NOTIONAL;
@@ -136,7 +148,7 @@ export function PerpsOrderForm({
     });
   };
 
-  const fillPercent = (pct: number) => setAmount(formatUnits((free * BigInt(pct)) / 100n, 6));
+  const fillPercent = (pct: number) => setAmount(formatUnits((maxCollateral(free, lev, market.takerFeeBps) * BigInt(pct)) / 100n, 6));
   const leverageChips = [2, 5, 10].filter((x) => x < market.maxLeverage);
   const mid = Math.round(market.maxLeverage / 2);
   const ticks = Array.from(new Set([1, mid, market.maxLeverage]));
@@ -249,6 +261,21 @@ export function PerpsOrderForm({
       </dl>
 
       <div>
+        {loadError !== null && (
+          <p role="alert" className="mb-1.5 text-[11px] text-danger">
+            Couldn&apos;t load market data.{" "}
+            <button
+              type="button"
+              onClick={() => {
+                void accountPoll.refresh();
+                void markPoll.refresh();
+              }}
+              className="underline underline-offset-2"
+            >
+              Retry
+            </button>
+          </p>
+        )}
         {tooSmall && <p className="mb-1.5 text-[11px] text-warning">Minimum order is about $10 notional</p>}
         <button
           type="button"

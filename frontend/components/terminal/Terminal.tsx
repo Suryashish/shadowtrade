@@ -15,6 +15,7 @@ import { PriceChart } from "./PriceChart";
 import { RecentTrades } from "./RecentTrades";
 import { Toast } from "./Toast";
 import { TopNav } from "./TopNav";
+import { WalletPicker } from "./WalletPicker";
 
 const DEFAULT_PERP = "ETH";
 
@@ -198,6 +199,7 @@ export function Terminal() {
         </div>
       )}
       <Toast activity={app.activity} onDismiss={app.clearActivity} />
+      <WalletPicker wallet={wallet} />
     </div>
   );
 }

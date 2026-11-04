@@ -1,4 +1,5 @@
 import { defineChain, type Address } from "viem";
+import deployments from "./deployments.json";
 
 // The local fork (anvil) keeps chain id 10143 and every testnet address, so only the RPC differs.
 export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? "https://testnet-rpc.monad.xyz";
@@ -15,8 +16,14 @@ export const monadTestnet = defineChain({
 
 export const EXPLORER = monadTestnet.blockExplorers.default.url;
 
-export const SHADOW_POOL: Address = "0xe9c9b7598dF01f3c9bE036E8e1B067a63eAa5A9D";
-export const RELAYER_ADDRESS: Address = "0x674f9e09E6fB102498bF9eb4744b247E4D5b0B54";
+export const RELAYER_ADDRESS = (process.env.NEXT_PUBLIC_RELAYER_ADDRESS ?? "0x674f9e09E6fB102498bF9eb4744b247E4D5b0B54") as Address;
+
+type PoolDeployment = { address: Address; token: Address; scope: string };
+type Deployment = { entrypoint: Address; startBlock: string; pools: Record<string, PoolDeployment> };
+
+// Written by the contracts deploy script (scripts/fork-setup.sh on a fork).
+export const DEPLOYMENT = (deployments as Record<string, Deployment>)[String(monadTestnet.id)];
+export const ENTRYPOINT = DEPLOYMENT.entrypoint;
 
 export const PERPL = {
   exchange: "0x1964C32f0bE608E7D29302AFF5E61268E72080cc",
@@ -61,3 +68,13 @@ export const BUCKETS = [500, 1_000, 5_000, 10_000] as const;
 
 // MON the relayer drips to each burner. Monad bills the gas *limit*, so budget for ~8 txs.
 export const BURNER_GAS_DRIP = 500_000_000_000_000_000n; // 0.5 MON
+
+export type Pool = { symbol: string; address: Address; token: Address; scope: bigint };
+
+export const POOLS: Pool[] = Object.entries(DEPLOYMENT.pools).map(([symbol, p]) => ({ symbol, address: p.address, token: p.token, scope: BigInt(p.scope) }));
+
+export function poolForToken(token: Address): Pool {
+  const pool = POOLS.find((p) => p.token.toLowerCase() === token.toLowerCase());
+  if (!pool) throw new Error("There is no privacy pool for this token.");
+  return pool;
+}

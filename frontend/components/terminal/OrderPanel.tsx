@@ -236,10 +236,10 @@ function Onboarding({ app, wallet, venue, busy }: { app: ShadowTrade; wallet: Wa
   );
 }
 
-const ENTER_PREFIXES = ["Creating a fresh burner", "Sending gas", "Moving ", "Opening a Perpl", "Depositing into Kuru"];
+const ENTER_PREFIXES = ["Creating a fresh burner", "Sending gas", "Generating zero-knowledge proof", "Opening a Perpl", "Depositing into Kuru"];
 
 function EnteringCard({ venue, index }: { venue: Venue; index: number }) {
-  const steps = ["Creating a fresh burner wallet", "Sending gas", "Moving funds from your private balance", venue === "perpl" ? "Opening a Perpl margin account" : "Depositing into Kuru"];
+  const steps = ["Creating a fresh burner wallet", "Sending gas", "Generating zero-knowledge proof", venue === "perpl" ? "Opening a Perpl margin account" : "Depositing into Kuru"];
   return (
     <div className="flex-1 p-3" role="status" aria-live="polite">
       <div className="rounded-md border border-border bg-surface-2 p-3">

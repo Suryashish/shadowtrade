@@ -69,9 +69,9 @@ export function PositionsTable({
   onSelectMarket?: (perpId: number) => void;
 }) {
   const owner = session?.burner.address ?? null;
-  const account = usePoll(owner ? () => getAccount(owner) : null, 3000, owner ?? "").data;
-  const accountId = account?.id ?? null;
-  const { data } = usePoll<Open[]>(
+  const accountPoll = usePoll(owner ? () => getAccount(owner) : null, 3000, owner ?? "");
+  const accountId = accountPoll.data?.id ?? null;
+  const positionsPoll = usePoll<Open[]>(
     accountId !== null && markets.length > 0
       ? async () => {
           const found = await Promise.all(markets.map(async (market) => ({ market, position: await getPosition(market.id, accountId) })));
@@ -81,9 +81,28 @@ export function PositionsTable({
     3000,
     `${owner ?? ""}:${accountId ?? ""}:${markets.length}`,
   );
+  const data = positionsPoll.data;
 
   if (!session) {
     return <EmptyState icon={EmptyIcons.shield} title="No open positions" body="Enter Stealth Mode in the order panel to trade from a fresh wallet." />;
+  }
+  const error = accountPoll.error ?? positionsPoll.error;
+  if (data === null && error !== null) {
+    const retry = () => {
+      void accountPoll.refresh();
+      void positionsPoll.refresh();
+    };
+    return (
+      <EmptyState
+        title="Positions didn't load"
+        body={error}
+        action={
+          <button onClick={retry} className="h-9 rounded-lg border border-border-strong px-4 text-xs font-medium hover:bg-surface-2">
+            Retry
+          </button>
+        }
+      />
+    );
   }
   if (data === null) return <SkeletonRows rows={3} label="Loading positions" />;
   if (data.length === 0) return <EmptyState title="No open positions" body="Your positions on Perpl appear here." />;

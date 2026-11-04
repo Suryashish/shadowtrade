@@ -1,66 +1,18 @@
-## Foundry
+## ShadowTrade contracts
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+ShadowTrade uses the audited, unmodified [0xbow Privacy Pools](https://github.com/0xbow-io/privacy-pools-core) contracts (Apache-2.0): one UUPS `Entrypoint` behind an ERC1967 proxy, one `PrivacyPoolComplex` per token (AUSD, USDC), and the Groth16 withdrawal and ragequit verifiers. `install-deps.sh` fetches the sources and `remappings.txt` maps them (`pp/`); this repo only adds the deploy script and tests.
 
-Foundry consists of:
+- `script/DeployPrivacyPools.s.sol`: deploys everything, registers the pools (minimum deposit 1 token, vetting fee 0, max relay fee 10 bps) and writes `../frontend/lib/deployments.json`. The broadcaster becomes the Entrypoint owner; `POSTMAN_ADDRESS` is the ASP postman (our relayer key).
+- `test/PrivacyPools.t.sol`: deployment, registration, roles and the deposit path. The proof and withdraw path needs circuit artifacts and is covered by the frontend end-to-end test.
+- `src/ShadowPool.sol`: the old non-ZK stand-in. No longer used by the app.
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+Status: deployed on the local fork only (`scripts/fork-setup.sh`), not on live testnet. The owner role can upgrade the Entrypoint and change pool config, so use a multisig or a dedicated key for any shared deployment.
 
-## Documentation
-
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
+### Commands
 
 ```shell
-$ forge build
-```
-
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+forge build
+forge test
+# for a real network, add --rpc-url, --broadcast and a signer
+POSTMAN_ADDRESS=<relayer> forge script script/DeployPrivacyPools.s.sol
 ```

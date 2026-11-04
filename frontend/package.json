@@ -11,7 +11,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@0xbow/privacy-pools-core-sdk": "1.5.0",
+    "@scure/bip39": "2.4.0",
     "lightweight-charts": "^5.2.1",
+    "maci-crypto": "2.5.0",
     "next": "16.4.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",

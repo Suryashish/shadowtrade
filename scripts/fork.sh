@@ -5,7 +5,7 @@
 set -euo pipefail
 exec anvil \
   --fork-url "${MONAD_RPC_URL:-https://testnet-rpc.monad.xyz}" \
-  --port 8545 \
+  --port "${PORT:-8545}" \
   --block-time 1 \
   --auto-impersonate \
   --silent

@@ -1,10 +1,12 @@
-import { erc20Abi, parseUnits, type Address, type LocalAccount } from "viem";
+import { erc20Abi, parseUnits, type Address } from "viem";
 import { noteFunded, publicClient, sendValue } from "./chain";
-import { RELAYER_ADDRESS, SPOT_MARKETS, TOKENS, type Venue } from "./config";
+import { entrypointAbi } from "./abi/entrypoint";
+import { ENTRYPOINT, RELAYER_ADDRESS, SPOT_MARKETS, TOKENS, type Venue } from "./config";
 import { createBurner, type Burner } from "./keys";
+import type { MasterKeys } from "./privacySdk";
 import * as kuru from "./kuru";
 import * as perpl from "./perpl";
-import { depositToPool, signWithdraw } from "./pool";
+import { depositToPool, withdrawToAddress, type PoolEnv } from "./pool";
 import { relay } from "./relay";
 
 export type Step = { index: number; total: number; label: string };
@@ -29,11 +31,12 @@ async function tokenBalance(token: Address, owner: Address) {
 }
 
 export async function enterStealth(opts: {
-  shadow: LocalAccount;
+  keys: MasterKeys;
   venue: Venue;
   bucket: number;
   onStep?: OnStep;
-  relayBase?: string;
+  /** Points the pool and relayer at another origin (Node test harness). */
+  poolEnv?: PoolEnv;
   /** Called with the session before any funds move, so it can be backed up and exited if a later step fails. */
   onSession?: (session: StealthSession) => Promise<void>;
 }): Promise<StealthSession> {
@@ -47,12 +50,10 @@ export async function enterStealth(opts: {
   const { burner } = session;
 
   step("Sending gas from the shared relayer");
-  const gas = await relay({ kind: "gas", to: burner.address }, opts.relayBase);
+  const gas = await relay({ kind: "gas", to: burner.address }, opts.poolEnv?.apiBase);
   noteFunded(burner.address, BigInt(gas.block));
 
-  step(`Moving ${opts.bucket.toLocaleString()} ${token.symbol} from your private balance`);
-  const request = await signWithdraw(opts.shadow, token.address, amount, burner.address);
-  const withdrawal = await relay({ kind: "withdraw", ...request }, opts.relayBase);
+  const withdrawal = await withdrawToAddress(opts.keys, token.address, amount, burner.address, () => step("Generating zero-knowledge proof"), opts.poolEnv);
   noteFunded(burner.address, BigInt(withdrawal.block));
 
   step(opts.venue === "perpl" ? "Opening a Perpl margin account" : "Depositing into Kuru");
@@ -85,7 +86,8 @@ async function unwindKuru(session: StealthSession) {
 /** Closes everything, returns all funds to the private balance and discards the burner. */
 export async function exitStealth(opts: {
   session: StealthSession;
-  shadow: Address;
+  keys: MasterKeys;
+  poolEnv?: PoolEnv;
   perpMarkets: perpl.PerpMarket[];
   onStep?: OnStep;
 }): Promise<bigint> {
@@ -99,12 +101,15 @@ export async function exitStealth(opts: {
 
   step("Returning funds to your private balance");
   const amount = await tokenBalance(token.address, session.burner.address);
-  if (amount > 0n) await depositToPool(session.burner.wallet, token.address, amount, opts.shadow);
+  // The Entrypoint refuses deposits under its minimum; that dust can't be returned but must not block the exit.
+  const [, minimumDeposit] = await publicClient.readContract({ address: ENTRYPOINT, abi: entrypointAbi, functionName: "assetConfig", args: [token.address] });
+  const returned = amount >= minimumDeposit ? amount : 0n;
+  if (returned > 0n) await depositToPool(session.burner.wallet, token.address, returned, opts.keys, opts.poolEnv);
 
   step("Returning leftover gas and wiping the burner key");
   // Funds are already safe in the pool; a failed dust sweep must not turn the exit into an error.
   await sweepGas(session.burner).catch(() => undefined);
-  return amount;
+  return returned;
 }
 
 async function sweepGas(burner: Burner) {

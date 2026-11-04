@@ -144,7 +144,7 @@ export function HowItWorks() {
               <p className="font-mono text-[12px] font-medium uppercase tracking-[0.14em] text-l-muted">What actually happened</p>
               <p className="mt-5 font-sans text-[clamp(2.25rem,4.5vw,3.25rem)] font-extrabold leading-none tracking-[-0.05em] text-l-fg">You <span className="text-l-accent">traded.</span></p>
               <p className={`mt-4 ${body}`}>A new wallet, funded by a pool everyone uses. Nothing in the trail points to you.</p>
-              <p className="mt-4 font-mono text-[11px] font-medium leading-relaxed text-l-faint">Testnet. The pool today is a development pool, not zero-knowledge.</p>
+              <p className="mt-4 font-mono text-[11px] font-medium leading-relaxed text-l-faint">Testnet. Zero-knowledge pool, but the anonymity set is still small.</p>
             </div>
           </div>
         </div>

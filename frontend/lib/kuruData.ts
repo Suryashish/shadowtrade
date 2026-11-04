@@ -3,7 +3,8 @@ import { publicClient } from "./chain";
 import type { SpotMarket } from "./config";
 import type { Candle, MarketStats, OrderBook, Resolution, Trade } from "./market";
 
-const API = "https://api.testnet.kuru.io/api/v1/markets";
+// Kuru sends no CORS headers, so the browser goes through our allow-listed proxy.
+const API = "/api/kuru";
 const VOLUME_SCALE = 1e18;
 const CANDLES_PER_LOAD = 300;
 

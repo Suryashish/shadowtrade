@@ -2,5 +2,12 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+# 0xbow Privacy Pools build settings (ShadowPool compiles fine with them too).
+solc_version = "0.8.28"
+optimizer = true
+optimizer_runs = 10_000
+bytecode_hash = "none"
+cbor_metadata = false
+fs_permissions = [{ access = "read-write", path = "../frontend/lib" }]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
