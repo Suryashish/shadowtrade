@@ -4,6 +4,9 @@ import deployment from "./privacyPools.json";
 // The local fork (anvil) keeps chain id 10143 and every testnet address, so only the RPC differs.
 export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? "https://testnet-rpc.monad.xyz";
 export const IS_FORK = RPC_URL.includes("127.0.0.1") || RPC_URL.includes("localhost");
+// Optional server-only RPC (pool indexer, ASP, relayer), so server traffic isn't rate-limited
+// alongside every browser on the public endpoint. Not NEXT_PUBLIC, so browsers always use RPC_URL.
+export const SERVER_RPC_URL = process.env.SERVER_RPC_URL || RPC_URL;
 
 export const monadTestnet = defineChain({
   id: 10143,
@@ -46,6 +49,10 @@ export const PRIVACY_POOLS = {
     kuru: { address: deployment.pools.USDC.address as Address, scope: BigInt(deployment.pools.USDC.scope) },
   },
 } satisfies { entrypoint: Address; deploymentBlock: bigint; pools: Record<Venue, { address: Address; scope: bigint }> };
+
+// The public RPC is load-balanced and returns [] (not an error) for blocks a node hasn't seen yet,
+// so the pool indexer stays this many blocks (~1.5 s) behind the head to never skip events.
+export const POOL_INDEX_LAG = 5n;
 
 // Each pool's minimumDepositAmount (contracts/script/DeployPrivacyPools.s.sol), in whole tokens.
 export const POOL_MIN_DEPOSIT = 1;

@@ -1,12 +1,12 @@
 import { createWalletClient, http, isHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { monadTestnet, RPC_URL } from "./config";
+import { monadTestnet, SERVER_RPC_URL } from "./config";
 
 /** The single server key: drips burner gas, relays withdrawals and posts ASP roots. */
 export function relayerWallet() {
   const key = process.env.RELAYER_PRIVATE_KEY;
   if (!key || !isHex(key)) throw new Error("Relayer is not configured.");
-  return createWalletClient({ account: privateKeyToAccount(key), chain: monadTestnet, transport: http(RPC_URL) });
+  return createWalletClient({ account: privateKeyToAccount(key), chain: monadTestnet, transport: http(SERVER_RPC_URL) });
 }
 
 let queue: Promise<unknown> = Promise.resolve();

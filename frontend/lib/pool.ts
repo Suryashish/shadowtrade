@@ -2,7 +2,7 @@ import type { Circuits, PrivacyPoolSDK } from "@0xbow/privacy-pools-core-sdk";
 import { erc20Abi, type Address, type WalletClient } from "viem";
 import { entrypointAbi } from "./abi/privacyPools";
 import { publicClient, write } from "./chain";
-import { PRIVACY_POOLS, RELAYER_ADDRESS, TOKENS, type Venue } from "./config";
+import { POOL_INDEX_LAG, PRIVACY_POOLS, RELAYER_ADDRESS, TOKENS, type Venue } from "./config";
 import type { MasterKeys, PoolState } from "./notes";
 import { relay, type RelayResponse } from "./relay";
 
@@ -71,7 +71,10 @@ export async function depositToPool(wallet: WalletClient, keys: MasterKeys, venu
   const token = TOKENS[venue].address;
   await write(wallet, { address: token, abi: erc20Abi, functionName: "approve", args: [PRIVACY_POOLS.entrypoint, amount] });
   await write(wallet, { address: PRIVACY_POOLS.entrypoint, abi: entrypointAbi, functionName: "deposit", args: [token, amount, precommitment] });
-  // Syncing makes the ASP approve the new deposit right away, so it is spendable immediately.
+  // Syncing makes the ASP approve the new deposit right away, so it is spendable immediately. The
+  // indexer trails the head, so wait until the deposit's block is in range.
+  const target = (await publicClient.getBlockNumber()) + POOL_INDEX_LAG;
+  while ((await publicClient.getBlockNumber()) < target) await new Promise((r) => setTimeout(r, 250));
   await fetchPoolState(venue, base).catch(() => undefined);
 }
 

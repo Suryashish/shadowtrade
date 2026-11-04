@@ -3,7 +3,7 @@ import { poseidon2 } from "poseidon-lite";
 import { BaseError, ContractFunctionRevertedError, parseAbi, type Address, type Log } from "viem";
 import { entrypointAbi } from "./abi/privacyPools";
 import { publicClient, write } from "./chain";
-import { PRIVACY_POOLS, type Venue } from "./config";
+import { POOL_INDEX_LAG, PRIVACY_POOLS, type Venue } from "./config";
 import type { PoolState } from "./notes";
 import { enqueue, relayerWallet } from "./relayer.server";
 
@@ -23,9 +23,12 @@ const poolEvents = parseAbi([
   "event Ragequit(address indexed _ragequitter, uint256 _commitment, uint256 _label, uint256 _value)",
 ]);
 
+const treeSizeAbi = parseAbi(["function currentTreeSize() view returns (uint256)"]);
+
 // Monad RPCs cap eth_getLogs at 100 blocks per call.
 const LOG_RANGE = 100n;
-const PARALLEL_RANGES = 8;
+// Kept low: the public RPC answers bursts of eth_getLogs with 429s.
+const PARALLEL_RANGES = 4;
 // Entrypoint.updateRoot requires a 32-64 byte CID. This ASP publishes its label set over HTTP
 // (GET /api/pool), not IPFS, so the CID is a fixed tag.
 const ASP_CID = "shadowtrade-asp-approve-all-v1-http-api-pool";
@@ -78,6 +81,21 @@ async function syncPool(pool: Address, head: bigint) {
     }
     Object.assign(idx, next, { scannedTo: ranges[Math.min(i + PARALLEL_RANGES, ranges.length) - 1][1] });
   }
+  // A skipped range would otherwise break this index for good (every later leaf "out of order").
+  if (ranges.length) {
+    const size = await publicClient.readContract({ address: pool, abi: treeSizeAbi, functionName: "currentTreeSize", blockNumber: idx.scannedTo });
+    if (size !== BigInt(idx.leaves.length)) throw new Error(`Pool index missed leaves (${idx.leaves.length} of ${size})`);
+  }
+}
+
+/** Syncs one pool; on any failure drops its index so the next sync rescans from scratch. */
+async function syncPoolOrReset(pool: Address, head: bigint) {
+  try {
+    await syncPool(pool, head);
+  } catch (e) {
+    indexes.delete(pool);
+    throw e;
+  }
 }
 
 async function latestRoot(): Promise<bigint> {
@@ -122,9 +140,9 @@ async function approveAll(): Promise<Asp> {
 }
 
 async function syncAll(): Promise<Asp> {
-  const head = await publicClient.getBlockNumber();
+  const head = (await publicClient.getBlockNumber()) - POOL_INDEX_LAG;
   // Every pool shares the Entrypoint's one ASP root, so all are indexed to the same block.
-  await Promise.all(Object.values(PRIVACY_POOLS.pools).map((p) => syncPool(p.address, head)));
+  await Promise.all(Object.values(PRIVACY_POOLS.pools).map((p) => syncPoolOrReset(p.address, head)));
   try {
     return await approveAll();
   } catch (e) {

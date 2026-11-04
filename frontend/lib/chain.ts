@@ -9,11 +9,17 @@ import {
   type Hash,
   type WalletClient,
 } from "viem";
-import { monadTestnet, RPC_URL } from "./config";
+import { monadTestnet, SERVER_RPC_URL } from "./config";
 
 // viem caches block numbers for ~4s by default, far longer than Monad's 400ms blocks; that would
-// stretch every 3-block pacing wait to several seconds.
-export const publicClient = createPublicClient({ chain: monadTestnet, transport: http(RPC_URL), cacheTime: 0, pollingInterval: 250 });
+// stretch every 3-block pacing wait to several seconds. The public RPC rate-limits bursts (429), so
+// retry with backoff (0.3, 0.6, 1.2, 2.4, 4.8 s) rather than failing the request.
+export const publicClient = createPublicClient({
+  chain: monadTestnet,
+  transport: http(SERVER_RPC_URL, { retryCount: 5, retryDelay: 300 }),
+  cacheTime: 0,
+  pollingInterval: 250,
+});
 
 // Monad state is visible to consensus 3 blocks late: a freshly funded account can't send until its
 // funding is 3 blocks old, and accounts under the 10 MON reserve may send one tx per 3 blocks.
