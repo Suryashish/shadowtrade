@@ -104,6 +104,19 @@ export async function enterStealth(opts: {
   return session;
 }
 
+/** A Perpl burner's margin account, plus any AUSD still sitting idle in the burner itself. */
+export async function perplSetup(address: Address) {
+  const [account, idle] = await Promise.all([perpl.getAccount(address), tokenBalance(TOKENS.perpl.address, address)]);
+  return { account, idle };
+}
+
+/** Finishes an interrupted entry: moves the burner's idle AUSD into Perpl, opening the account if needed. */
+export async function finishPerplSetup(session: StealthSession) {
+  const { idle } = await perplSetup(session.burner.address);
+  if (idle === 0n) throw new Error("The burner holds no AUSD. Exit Stealth and enter again.");
+  await perpl.fundAccount(session.burner.wallet, idle);
+}
+
 /**
  * The burner gets one gas drip, so it must always keep enough to exit: close every position
  * (including the one about to open), withdraw margin and deposit back. Otherwise its funds would be

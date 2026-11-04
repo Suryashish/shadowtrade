@@ -71,11 +71,15 @@ export async function depositToPool(wallet: WalletClient, keys: MasterKeys, venu
   const token = TOKENS[venue].address;
   await write(wallet, { address: token, abi: erc20Abi, functionName: "approve", args: [PRIVACY_POOLS.entrypoint, amount] });
   await write(wallet, { address: PRIVACY_POOLS.entrypoint, abi: entrypointAbi, functionName: "deposit", args: [token, amount, precommitment] });
-  // Syncing makes the ASP approve the new deposit right away, so it is spendable immediately. The
-  // indexer trails the head, so wait until the deposit's block is in range.
+  // Syncing makes the ASP approve the new deposit right away, so it is spendable immediately.
+  await untilIndexed();
+  await fetchPoolState(venue, base).catch(() => undefined);
+}
+
+/** The server indexer trails the head by POOL_INDEX_LAG blocks; waits until our latest tx is in its range. */
+async function untilIndexed() {
   const target = (await publicClient.getBlockNumber()) + POOL_INDEX_LAG;
   while ((await publicClient.getBlockNumber()) < target) await new Promise((r) => setTimeout(r, 250));
-  await fetchPoolState(venue, base).catch(() => undefined);
 }
 
 // A new ASP root (any new deposit in the pool) landing between proving and relaying invalidates the
@@ -107,6 +111,8 @@ export async function withdrawFromPool(opts: {
     try {
       receipts.push(await relay({ kind: "withdraw", venue, withdrawal, proof }, base));
       left -= amount;
+      // The next plan (and the caller's balance) must see this spend and its change note.
+      await untilIndexed();
     } catch (e) {
       if (!(e instanceof Error && STALE_PROOF.test(e.message)) || retries++ >= MAX_STALE_RETRIES) throw e;
     }

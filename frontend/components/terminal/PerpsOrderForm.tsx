@@ -5,7 +5,6 @@ import { formatUnits, parseUnits } from "viem";
 import { usePoll } from "@/hooks/usePoll";
 import type { Step } from "@/lib/session";
 import {
-  getAccount,
   getMarkPrice,
   liquidationPrice,
   lotsFor,
@@ -14,7 +13,7 @@ import {
   type Position,
   type Side,
 } from "@/lib/perpl";
-import { ensureExitGas, type StealthSession } from "@/lib/session";
+import { ensureExitGas, finishPerplSetup, perplSetup, type StealthSession } from "@/lib/session";
 
 type Run = (job: (onStep: (s: Step) => void) => Promise<string>) => Promise<void>;
 
@@ -59,9 +58,10 @@ function hypothetical(side: Side, lots: bigint, mark: bigint, margin: bigint): P
   return { side, sizeLots: lots, entryPNS: mark, marginCNS: margin, pnlCNS: 0n, markPNS: mark };
 }
 
-function blockReason(o: { busy: boolean; hasAccount: boolean; collateral: bigint; free: bigint; lots: bigint; notional: number; mark: bigint | null }) {
+function blockReason(o: { busy: boolean; loaded: boolean; hasAccount: boolean; collateral: bigint; free: bigint; lots: bigint; notional: number; mark: bigint | null }) {
   if (o.busy) return "Working…";
-  if (!o.hasAccount || o.mark === null) return "Loading market…";
+  if (!o.loaded || o.mark === null) return "Loading market…";
+  if (!o.hasAccount) return "Perpl account not set up";
   if (o.collateral <= 0n) return "Enter an amount";
   if (o.collateral > o.free) return "Amount exceeds free balance";
   if (o.lots <= 0n) return "Size too small";
@@ -107,7 +107,8 @@ export function PerpsOrderForm({
   const lev = Math.min(leverage, market.maxLeverage);
 
   const owner = session.burner.address;
-  const account = usePoll(() => getAccount(owner), 3000, owner).data;
+  const setup = usePoll(() => perplSetup(owner), 3000, owner).data;
+  const account = setup?.account ?? null;
   const polledMark = usePoll(() => getMarkPrice(market.id), 2000, String(market.id)).data;
   const free = account?.balanceCNS ?? 0n;
   const collateral = parseCollateral(amount);
@@ -122,7 +123,7 @@ export function PerpsOrderForm({
   const fee = (notional * market.takerFeeBps) / 10_000;
   const liq = mark !== null && lots > 0n ? liquidationPrice(market, hypothetical(side, lots, mark, collateral)) : null;
 
-  const reason = blockReason({ busy, hasAccount: account !== null, collateral, free, lots, notional, mark: polledMark });
+  const reason = blockReason({ busy, loaded: setup !== null, hasAccount: account !== null, collateral, free, lots, notional, mark: polledMark });
   const isLong = side === "long";
   const over = account !== null && collateral > free;
   const tooSmall = !over && lots > 0n && notional < MIN_NOTIONAL;
@@ -138,6 +139,13 @@ export function PerpsOrderForm({
       return `Opened ${side} ${formatSize(toSize(market, lots), market.sizeDecimals)} ${market.symbol} at ${lev}x`;
     });
   };
+
+  const finishSetup = () =>
+    void run(async (onStep) => {
+      onStep({ index: 1, total: 1, label: "Opening a Perpl margin account" });
+      await finishPerplSetup(session);
+      return "Perpl account is ready. You can trade now.";
+    });
 
   const fillPercent = (pct: number) => setAmount(formatUnits((free * BigInt(pct)) / 100n, 6));
   const leverageChips = [2, 5, 10].filter((x) => x < market.maxLeverage);
@@ -252,6 +260,25 @@ export function PerpsOrderForm({
       </dl>
 
       <div>
+        {setup && !account && (
+          <div className="mb-2 rounded-md border border-warning/40 bg-surface-2 p-2.5 text-[11px] leading-snug text-muted">
+            {setup.idle > 0n ? (
+              <>
+                Setup stopped before the Perpl account opened. {formatUsd(Number(setup.idle) / CNS).replace("$", "")} AUSD is waiting in your burner.
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={finishSetup}
+                  className="mt-2 h-8 w-full rounded-md bg-accent text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  Finish setup
+                </button>
+              </>
+            ) : (
+              "Setup stopped before any AUSD reached your burner. Exit Stealth and enter again."
+            )}
+          </div>
+        )}
         {tooSmall && <p className="mb-1.5 text-[11px] text-warning">Minimum order is about $10 notional</p>}
         <button
           type="button"
