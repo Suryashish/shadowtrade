@@ -1,6 +1,6 @@
 {
   "commitmentVerifier": "0x30dcf472c6356e11025926EB5f3121f9D95424a0",
-  "deploymentBlock": 76896287,
+  "deploymentBlock": 76910104,
   "entrypoint": "0x48101d22280dC6c54c115F21fbE526f56Edca798",
   "pools": {
     "AUSD": {

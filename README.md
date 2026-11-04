@@ -157,7 +157,11 @@ Open `http://localhost:3000` for the landing page and `/trade` for the terminal.
 
 ### B. Live Monad testnet
 
+The 0xbow Privacy Pools are deployed on live Monad testnet (entrypoint `0x48101d22280dC6c54c115F21fbE526f56Edca798`, AUSD pool `0xf55a210B72DAFDd6655FD309d7edffC5DF59Ea48`, block 76910104; owner and ASP postman is the relayer `0x674f...0B54`). Forks taken after that block already contain them, so `fork-setup.sh` skips the deploy.
+
 Set `NEXT_PUBLIC_RPC_URL=https://testnet-rpc.monad.xyz` and a funded `RELAYER_PRIVATE_KEY` (faucet: https://faucet.monad.xyz). Collateral tokens are admin-mint only, so you need AUSD (Perpl) and USDC (Kuru) from the respective teams. See [`API_KEY_REQUIREMENTS.md`](./API_KEY_REQUIREMENTS.md). No API keys are needed for Perpl or Kuru trading.
+
+`pnpm smoke:live` (needs `LIVE_TEST_PRIVATE_KEY` and the app running, `RELAY_URL` defaults to `http://localhost:3000`) runs one minimal round trip with real AUSD: deposit the 500 bucket, enter stealth, a 25 AUSD 2x ETH long, exit, and withdraw the private balance back to the main wallet. It resumes an unfinished session from an earlier run. First live run: stealth ready in 17.5 s, 499.95 of 500 AUSD returned (0.05 AUSD in Perpl fees), burner funded by the Entrypoint in a relayer-sent transaction.
 
 ## Testing
 
