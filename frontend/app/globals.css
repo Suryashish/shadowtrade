@@ -1,26 +1,164 @@
 @import "tailwindcss";
 
+/* Exchange-grade palette. Dark is the primary experience; light mirrors it. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #f2f3f5;
+  --surface-3: #e9ebee;
+  --border: #e4e6ea;
+  --border-strong: #d3d6dc;
+  --text: #0e1116;
+  --muted: #5c6370;
+  --faint: #8d939e;
+  --accent: #6e54f5;
+  --accent-hover: #5c42ea;
+  --accent-soft: #6e54f514;
+  --accent-text: #ffffff;
+  --success: #0b9f62;
+  --success-soft: #0b9f6214;
+  --warning: #b86e00;
+  --warning-soft: #b86e0014;
+  --danger: #e0364a;
+  --danger-soft: #e0364a12;
+  --chart-grid: #eef0f3;
+  --shadow: 0 1px 2px rgb(16 18 24 / 0.04), 0 8px 24px rgb(16 18 24 / 0.06);
+  --shadow-pop: 0 12px 40px rgb(16 18 24 / 0.14);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --bg: #08090b;
+    --surface: #0f1115;
+    --surface-2: #151820;
+    --surface-3: #1b1f28;
+    --border: #1c2029;
+    --border-strong: #272c37;
+    --text: #e9ebef;
+    --muted: #8e95a2;
+    --faint: #5c6370;
+    --accent: #836ef9;
+    --accent-hover: #9683ff;
+    --accent-soft: #836ef91f;
+    --accent-text: #ffffff;
+    --success: #22c983;
+    --success-soft: #22c9831a;
+    --warning: #f0a83a;
+    --warning-soft: #f0a83a1a;
+    --danger: #f6465d;
+    --danger-soft: #f6465d1a;
+    --chart-grid: #13161c;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-pop: 0 16px 48px rgb(0 0 0 / 0.55);
   }
 }
 
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-text: var(--accent-text);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --shadow-card: var(--shadow);
+  --shadow-pop: var(--shadow-pop);
+}
+
+html {
+  color-scheme: light dark;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Text inputs sit inside bordered fields that already highlight on focus-within. */
+input:not([type="range"]):focus-visible {
+  outline: none;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thin, unobtrusive scrollbars for dense panels. */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes flash-up {
+  from {
+    background-color: var(--success-soft);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+@keyframes flash-down {
+  from {
+    background-color: var(--danger-soft);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 160ms ease-out;
+}
+
+.flash-up {
+  animation: flash-up 700ms ease-out;
+}
+
+.flash-down {
+  animation: flash-down 700ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .flash-up,
+  .flash-down {
+    animation: none;
+  }
 }
