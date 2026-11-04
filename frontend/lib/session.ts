@@ -1,10 +1,11 @@
-import { erc20Abi, parseUnits, type Address, type LocalAccount } from "viem";
+import { erc20Abi, parseUnits, type Address } from "viem";
 import { noteFunded, publicClient, sendValue } from "./chain";
 import { RELAYER_ADDRESS, SPOT_MARKETS, TOKENS, type Venue } from "./config";
 import { createBurner, type Burner } from "./keys";
 import * as kuru from "./kuru";
 import * as perpl from "./perpl";
-import { depositToPool, signWithdraw } from "./pool";
+import type { MasterKeys } from "./notes";
+import { depositToPool, minimumDeposit, withdrawFromPool } from "./pool";
 import { relay } from "./relay";
 
 export type Step = { index: number; total: number; label: string };
@@ -18,6 +19,10 @@ export type StealthSession = {
 };
 
 const GAS_SWEEP_LIMIT = 21_000n;
+// Gas limits measured on a full session (Monad bills the limit): margin withdraw ~180k, approve
+// ~85k, pool deposit ~530k (grows with the tree), sweep 21k; each position costs ~340k to close.
+const EXIT_GAS = 900_000n;
+const POSITION_GAS = 340_000n;
 
 function stepper(total: number, onStep?: OnStep) {
   let index = 0;
@@ -29,7 +34,7 @@ async function tokenBalance(token: Address, owner: Address) {
 }
 
 export async function enterStealth(opts: {
-  shadow: LocalAccount;
+  keys: MasterKeys;
   venue: Venue;
   bucket: number;
   onStep?: OnStep;
@@ -50,16 +55,29 @@ export async function enterStealth(opts: {
   const gas = await relay({ kind: "gas", to: burner.address }, opts.relayBase);
   noteFunded(burner.address, BigInt(gas.block));
 
-  step(`Moving ${opts.bucket.toLocaleString()} ${token.symbol} from your private balance`);
-  const request = await signWithdraw(opts.shadow, token.address, amount, burner.address);
-  const withdrawal = await relay({ kind: "withdraw", ...request }, opts.relayBase);
-  noteFunded(burner.address, BigInt(withdrawal.block));
+  step(`Proving and moving ${opts.bucket.toLocaleString()} ${token.symbol} from your private balance`);
+  const withdrawals = await withdrawFromPool({ keys: opts.keys, venue: opts.venue, amount, recipient: burner.address, base: opts.relayBase });
+  noteFunded(burner.address, BigInt(withdrawals[withdrawals.length - 1].block));
 
   step(opts.venue === "perpl" ? "Opening a Perpl margin account" : "Depositing into Kuru");
   if (opts.venue === "perpl") await perpl.fundAccount(burner.wallet, amount);
   else await kuru.deposit(burner.wallet, token.address, amount);
 
   return session;
+}
+
+/**
+ * The burner gets one gas drip, so it must always keep enough to exit: close every position
+ * (including the one about to open), withdraw margin and deposit back. Otherwise its funds would be
+ * stuck. Throws LowBurnerGas when opening another position would eat into that reserve.
+ */
+export async function ensureExitGas(session: StealthSession, markets: perpl.PerpMarket[]) {
+  const { address } = session.burner;
+  const [account, balance, fees] = await Promise.all([perpl.getAccount(address), publicClient.getBalance({ address }), publicClient.estimateFeesPerGas()]);
+  const open = account ? (await Promise.all(markets.map((m) => perpl.getPosition(m.id, account.id)))).filter(Boolean).length : 0;
+  // Opening costs about as much as closing.
+  const needed = (EXIT_GAS + POSITION_GAS * BigInt(open + 2)) * fees.maxFeePerGas;
+  if (balance < needed) throw new Error("LowBurnerGas");
 }
 
 async function unwindPerpl(session: StealthSession, markets: perpl.PerpMarket[]) {
@@ -85,9 +103,10 @@ async function unwindKuru(session: StealthSession) {
 /** Closes everything, returns all funds to the private balance and discards the burner. */
 export async function exitStealth(opts: {
   session: StealthSession;
-  shadow: Address;
+  keys: MasterKeys;
   perpMarkets: perpl.PerpMarket[];
   onStep?: OnStep;
+  relayBase?: string;
 }): Promise<bigint> {
   const { session } = opts;
   const token = TOKENS[session.venue];
@@ -98,13 +117,16 @@ export async function exitStealth(opts: {
   else await unwindKuru(session);
 
   step("Returning funds to your private balance");
-  const amount = await tokenBalance(token.address, session.burner.address);
-  if (amount > 0n) await depositToPool(session.burner.wallet, token.address, amount, opts.shadow);
+  const [amount, minimum] = await Promise.all([tokenBalance(token.address, session.burner.address), minimumDeposit(session.venue)]);
+  // The pool rejects deposits under its minimum. Dust that small is left behind rather than
+  // blocking the exit forever (sending it anywhere else would link the burner).
+  const returned = amount >= minimum ? amount : 0n;
+  if (returned > 0n) await depositToPool(session.burner.wallet, opts.keys, session.venue, returned, opts.relayBase);
 
   step("Returning leftover gas and wiping the burner key");
   // Funds are already safe in the pool; a failed dust sweep must not turn the exit into an error.
   await sweepGas(session.burner).catch(() => undefined);
-  return amount;
+  return returned;
 }
 
 async function sweepGas(burner: Burner) {

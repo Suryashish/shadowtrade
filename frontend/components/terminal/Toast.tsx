@@ -5,11 +5,13 @@ import type { Activity } from "@/hooks/useShadowTrade";
 import { Spinner } from "../ui";
 
 const SUCCESS_DISMISS_MS = 6000;
+// Errors stay long enough to read, then clear so they never keep covering controls.
+const ERROR_DISMISS_MS = 12_000;
 
 export function Toast({ activity, onDismiss }: { activity: Activity; onDismiss: () => void }) {
   useEffect(() => {
-    if (activity.kind !== "done") return;
-    const id = setTimeout(onDismiss, SUCCESS_DISMISS_MS);
+    if (activity.kind !== "done" && activity.kind !== "error") return;
+    const id = setTimeout(onDismiss, activity.kind === "done" ? SUCCESS_DISMISS_MS : ERROR_DISMISS_MS);
     return () => clearTimeout(id);
   }, [activity, onDismiss]);
 
@@ -17,8 +19,9 @@ export function Toast({ activity, onDismiss }: { activity: Activity; onDismiss: 
 
   const bar = activity.kind === "error" ? "bg-danger" : activity.kind === "done" ? "bg-success" : "bg-accent";
 
+  // On desktop, sits left of the 320px order panel so it never covers Enter/Exit Stealth.
   return (
-    <div className="pointer-events-none fixed inset-x-3 bottom-3 z-50 flex justify-end sm:inset-x-auto sm:right-4 sm:bottom-4">
+    <div className="pointer-events-none fixed inset-x-3 bottom-3 z-50 flex justify-end sm:inset-x-auto sm:right-4 sm:bottom-4 lg:right-[336px]">
       <div
         role={activity.kind === "error" ? "alert" : "status"}
         data-toast={activity.kind}

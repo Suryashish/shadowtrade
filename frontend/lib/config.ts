@@ -1,4 +1,5 @@
 import { defineChain, type Address } from "viem";
+import deployment from "./privacyPools.json";
 
 // The local fork (anvil) keeps chain id 10143 and every testnet address, so only the RPC differs.
 export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? "https://testnet-rpc.monad.xyz";
@@ -15,7 +16,6 @@ export const monadTestnet = defineChain({
 
 export const EXPLORER = monadTestnet.blockExplorers.default.url;
 
-export const SHADOW_POOL: Address = "0xe9c9b7598dF01f3c9bE036E8e1B067a63eAa5A9D";
 export const RELAYER_ADDRESS: Address = "0x674f9e09E6fB102498bF9eb4744b247E4D5b0B54";
 
 export const PERPL = {
@@ -35,6 +35,22 @@ export type Venue = "perpl" | "kuru";
 // Kuru spot is off until we have testnet USDC for it. Set NEXT_PUBLIC_ENABLE_KURU=true to bring it back.
 export const KURU_ENABLED = process.env.NEXT_PUBLIC_ENABLE_KURU === "true";
 export const VENUES: Venue[] = KURU_ENABLED ? ["perpl", "kuru"] : ["perpl"];
+
+// 0xbow Privacy Pools: one Entrypoint, one ERC20 pool per venue token. privacyPools.json is the
+// deploy script's output (contracts/deployments/10143.json), copied in by scripts/fork-setup.sh.
+export const PRIVACY_POOLS = {
+  entrypoint: deployment.entrypoint as Address,
+  deploymentBlock: BigInt(deployment.deploymentBlock),
+  pools: {
+    perpl: { address: deployment.pools.AUSD.address as Address, scope: BigInt(deployment.pools.AUSD.scope) },
+    kuru: { address: deployment.pools.USDC.address as Address, scope: BigInt(deployment.pools.USDC.scope) },
+  },
+} satisfies { entrypoint: Address; deploymentBlock: bigint; pools: Record<Venue, { address: Address; scope: bigint }> };
+
+// Each pool's minimumDepositAmount (contracts/script/DeployPrivacyPools.s.sol), in whole tokens.
+export const POOL_MIN_DEPOSIT = 1;
+
+export const isPoolVenue = (v: unknown): v is Venue => typeof v === "string" && Object.hasOwn(PRIVACY_POOLS.pools, v);
 
 export type StableToken = { address: Address; symbol: string; decimals: number; venue: Venue };
 

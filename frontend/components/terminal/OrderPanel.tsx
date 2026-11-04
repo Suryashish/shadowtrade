@@ -119,6 +119,7 @@ function EnterStealth({ app, venue, busy }: { app: ShadowTrade; venue: Venue; bu
         <dl className="divide-y divide-border rounded-md border border-border bg-surface-2 px-2.5">
           <SummaryRow label="Session size" value={`${bucket.toLocaleString()} ${token.symbol}`} mono />
           <SummaryRow label="Venue" value={venue === "perpl" ? "Perpl perps" : "Kuru spot"} />
+          <SummaryRow label="Funding" value="zero-knowledge proof, made in your browser" />
           <SummaryRow label="Gas" value="0.5 MON, paid by the relayer" />
           <SummaryRow label="Your wallet" value="never touches the burner" />
         </dl>
@@ -236,10 +237,10 @@ function Onboarding({ app, wallet, venue, busy }: { app: ShadowTrade; wallet: Wa
   );
 }
 
-const ENTER_PREFIXES = ["Creating a fresh burner", "Sending gas", "Moving ", "Opening a Perpl", "Depositing into Kuru"];
+const ENTER_PREFIXES = ["Creating a fresh burner", "Sending gas", "Proving and moving ", "Opening a Perpl", "Depositing into Kuru"];
 
 function EnteringCard({ venue, index }: { venue: Venue; index: number }) {
-  const steps = ["Creating a fresh burner wallet", "Sending gas", "Moving funds from your private balance", venue === "perpl" ? "Opening a Perpl margin account" : "Depositing into Kuru"];
+  const steps = ["Creating a fresh burner wallet", "Sending gas", "Proving and moving funds from your private balance", venue === "perpl" ? "Opening a Perpl margin account" : "Depositing into Kuru"];
   return (
     <div className="flex-1 p-3" role="status" aria-live="polite">
       <div className="rounded-md border border-border bg-surface-2 p-3">
@@ -405,7 +406,7 @@ export function OrderPanel({
       <div className="scroll-thin min-h-0 flex-1 overflow-y-auto [mask-image:linear-gradient(to_bottom,black_calc(100%-28px),transparent)]">
         {market.venue === "perpl" ? (
           <>
-            <PerpsOrderForm session={session} market={market.perp} run={app.run} busy={busy} priceHint={priceHint} />
+            <PerpsOrderForm session={session} market={market.perp} markets={app.markets} run={app.run} busy={busy} priceHint={priceHint} />
             <AccountCard app={app} session={session} />
           </>
         ) : (

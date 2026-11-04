@@ -34,6 +34,8 @@ frontend/out/
 frontend/build/
 frontend/coverage/
 frontend/next-env.d.ts
+# 0xbow circuit artifacts (~24 MB), fetched by frontend/scripts/fetch-circuits.sh
+frontend/public/artifacts/
 .vercel
 *.tsbuildinfo
 
@@ -42,8 +44,8 @@ frontend/next-env.d.ts
 # ---------------------------------------------------------------
 contracts/out/
 contracts/cache/
-contracts/broadcast/*/31337/
-contracts/broadcast/**/dry-run/
+# Deployed addresses are recorded in contracts/deployments/<chainId>.json instead.
+contracts/broadcast/
 contracts/coverage/
 contracts/lcov.info
 contracts/report/

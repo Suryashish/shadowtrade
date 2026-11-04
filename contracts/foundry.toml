@@ -1,6 +1,17 @@
 [profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
-
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+libs = ["lib", "node_modules"]
+solc_version = "0.8.28"
+optimizer_runs = 10_000
+bytecode_hash = "none"
+cbor_metadata = false
+fs_permissions = [
+  { access = "read", path = "./script/poseidon" },
+  { access = "read-write", path = "./deployments" },
+]
+# Canonical poseidon-solidity CREATE2 addresses (same on every EVM chain); deployed by the deploy script if absent.
+libraries = [
+  "node_modules/poseidon-solidity/PoseidonT3.sol:PoseidonT3:0x3333333C0A88F9BE4fd23ed0536F9B6c427e3B93",
+  "node_modules/poseidon-solidity/PoseidonT4.sol:PoseidonT4:0x4443338EF595F44e0121df4C21102677B142ECF0",
+]

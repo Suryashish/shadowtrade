@@ -14,7 +14,7 @@ import {
   type Position,
   type Side,
 } from "@/lib/perpl";
-import type { StealthSession } from "@/lib/session";
+import { ensureExitGas, type StealthSession } from "@/lib/session";
 
 type Run = (job: (onStep: (s: Step) => void) => Promise<string>) => Promise<void>;
 
@@ -89,12 +89,14 @@ const leverageChip = (active: boolean) =>
 export function PerpsOrderForm({
   session,
   market,
+  markets,
   run,
   busy,
   priceHint,
 }: {
   session: StealthSession;
   market: PerpMarket;
+  markets: PerpMarket[];
   run: Run;
   busy: boolean;
   priceHint?: number | null;
@@ -131,6 +133,7 @@ export function PerpsOrderForm({
     if (reason !== null) return;
     void run(async (onStep) => {
       onStep({ index: 1, total: 1, label: "Placing market order on Perpl" });
+      await ensureExitGas(session, markets);
       await openPosition(session.burner.wallet, market, side, lots, lev);
       return `Opened ${side} ${formatSize(toSize(market, lots), market.sizeDecimals)} ${market.symbol} at ${lev}x`;
     });

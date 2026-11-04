@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { isAddress, type Address } from "viem";
 import type { ShadowTrade } from "@/hooks/useShadowTrade";
-import { TOKENS, type Venue } from "@/lib/config";
+import { POOL_MIN_DEPOSIT, TOKENS, type Venue } from "@/lib/config";
 
 // Testnet collateral is admin-minted by each venue; there is no public faucet.
 const TOKEN_SOURCES: Record<Venue, { hint: string; cta: string; url: string }> = {
@@ -77,7 +77,15 @@ export function DepositForm({ app, venue, busy }: { app: ShadowTrade; venue: Ven
   const max = Number(app.balances[venue].wallet) / 10 ** token.decimals;
   const value = Number(amount);
   const odd = value > 0 && value % 100 !== 0;
-  const problem = busy ? "Working…" : !value ? "Enter an amount" : value > max ? `Not enough ${token.symbol} in wallet` : null;
+  const problem = busy
+    ? "Working…"
+    : !value
+      ? "Enter an amount"
+      : value < POOL_MIN_DEPOSIT
+        ? `Minimum deposit is ${POOL_MIN_DEPOSIT} ${token.symbol}`
+        : value > max
+          ? `Not enough ${token.symbol} in wallet`
+          : null;
   if (app.balancesLoaded && max === 0) {
     return (
       <div className="rounded-md border border-border bg-surface-2 p-3 text-xs leading-relaxed">

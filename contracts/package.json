@@ -1,0 +1,10 @@
+{
+  "name": "shadowtrade-contracts",
+  "private": true,
+  "dependencies": {
+    "@openzeppelin/contracts": "5.1.0",
+    "@openzeppelin/contracts-upgradeable": "5.0.2",
+    "lean-imt": "npm:@zk-kit/lean-imt.sol@2.0.0",
+    "poseidon-solidity": "0.0.5"
+  }
+}

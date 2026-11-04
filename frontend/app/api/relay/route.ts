@@ -1,11 +1,10 @@
-import { createWalletClient, http, isAddress, isHex, type Address, type Hash } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { shadowPoolAbi } from "@/lib/abi/pool";
+import { BaseError, ContractFunctionRevertedError, decodeAbiParameters, isAddress, isAddressEqual, isHex, type Address, type Hash, type Hex } from "viem";
+import { entrypointAbi, privacyPoolAbi } from "@/lib/abi/privacyPools";
 import { publicClient, sendValue, write } from "@/lib/chain";
-import { BURNER_GAS_DRIP, IS_FORK, monadTestnet, RPC_URL, SHADOW_POOL, TOKENS } from "@/lib/config";
+import { BURNER_GAS_DRIP, IS_FORK, isPoolVenue, PRIVACY_POOLS } from "@/lib/config";
 import type { RelayRequest } from "@/lib/relay";
+import { enqueue, relayerWallet } from "@/lib/relayer.server";
 
-const ALLOWED_TOKENS = new Set(Object.values(TOKENS).map((t) => t.address.toLowerCase()));
 const dripped = new Set<string>();
 
 // Best-effort abuse limits. State is per server instance (lost on restart / not shared across
@@ -15,10 +14,13 @@ const WINDOW_MS = 10 * 60_000;
 const MAX_GAS_PER_IP = 6; // one drip per stealth session
 const MAX_WITHDRAW_PER_IP = 20;
 const MAX_GAS_PER_WINDOW = 10; // global: caps drain at ~5 MON per window
-const MIN_RELAYER_BALANCE = 1_000_000_000_000_000_000n; // keep 1 MON for withdrawals
-const MAX_BODY_BYTES = 4096;
+const MAX_WITHDRAW_PER_WINDOW = 60; // global: each relayed withdrawal costs the relayer gas
+const MIN_RELAYER_BALANCE = 1_000_000_000_000_000_000n; // keep 1 MON for withdrawals and ASP roots
+const MIN_RELAYER_BALANCE_TO_RELAY = 100_000_000_000_000_000n; // 0.1 MON
+const MAX_BODY_BYTES = 8192;
 const hits = new Map<string, number[]>();
 let globalGas: number[] = [];
+let globalWithdraws: number[] = [];
 
 function allow(bucket: string, limit: number, store = hits): boolean {
   const now = Date.now();
@@ -42,21 +44,6 @@ class RelayError extends Error {
 function clientIp(request: Request) {
   return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "unknown";
 }
-let queue: Promise<unknown> = Promise.resolve();
-
-function relayerWallet() {
-  const key = process.env.RELAYER_PRIVATE_KEY;
-  if (!key || !isHex(key)) throw new Error("Relayer is not configured.");
-  return createWalletClient({ account: privateKeyToAccount(key), chain: monadTestnet, transport: http(RPC_URL) });
-}
-
-// One relayer key: serialize sends so nonces and Monad's per-sender pacing stay correct.
-function enqueue<T>(job: () => Promise<T>): Promise<T> {
-  const run = queue.then(job, job);
-  queue = run.catch(() => undefined);
-  return run;
-}
-
 async function dripGas(to: Address): Promise<Hash> {
   const key = to.toLowerCase();
   if (dripped.has(key)) throw new RelayError("This burner was already funded.");
@@ -73,22 +60,69 @@ async function dripGas(to: Address): Promise<Hash> {
   });
 }
 
+type PoolError = Extract<(typeof privacyPoolAbi)[number], { type: "error" }>;
+// Pool reverts (ContextMismatch, NullifierAlreadySpent, ...) bubble up through relay(); include the
+// pool's errors so they decode by name.
+const relayAbi = [...entrypointAbi, ...privacyPoolAbi.filter((item): item is PoolError => item.type === "error")];
+
+type Bigs<N extends number, T extends bigint[] = []> = T["length"] extends N ? T : Bigs<N, [...T, bigint]>;
+const isWord = (v: unknown): v is Hex => typeof v === "string" && isHex(v) && v.length === 66;
+const words = (v: unknown, n: number) => Array.isArray(v) && v.length === n;
+
+/** Relays a ZK withdrawal through the Entrypoint, so the recipient never needs gas or a link to the depositor. */
 async function relayWithdraw(req: Extract<RelayRequest, { kind: "withdraw" }>): Promise<Hash> {
-  const valid =
-    isAddress(req.token) &&
-    isAddress(req.to) &&
-    isAddress(req.owner) &&
-    isHex(req.signature) &&
-    /^\d+$/.test(req.amount) &&
-    /^\d+$/.test(req.deadline) &&
-    ALLOWED_TOKENS.has(req.token.toLowerCase());
-  if (!valid) throw new RelayError("Invalid withdrawal request.");
-  return write(relayerWallet(), {
-    address: SHADOW_POOL,
-    abi: shadowPoolAbi,
-    functionName: "withdraw",
-    args: [req.token, BigInt(req.amount), req.to, req.owner, BigInt(req.deadline), req.signature],
+  const { withdrawal, proof } = req;
+  const validShape =
+    isPoolVenue(req.venue) &&
+    isAddress(withdrawal?.processooor) &&
+    isHex(withdrawal?.data) &&
+    words(proof?.pA, 2) &&
+    words(proof?.pC, 2) &&
+    words(proof?.pubSignals, 8) &&
+    words(proof?.pB, 2) &&
+    proof.pB.every((row) => words(row, 2) && row.every(isWord)) &&
+    [...proof.pA, ...proof.pC, ...proof.pubSignals].every(isWord);
+  if (!validShape) throw new RelayError("Invalid withdrawal request.");
+  if (!isAddressEqual(withdrawal.processooor, PRIVACY_POOLS.entrypoint)) throw new RelayError("Invalid withdrawal request.");
+  let fee: bigint;
+  try {
+    [{ relayFeeBPS: fee }] = decodeAbiParameters(
+      [{ type: "tuple", components: [{ name: "recipient", type: "address" }, { name: "feeRecipient", type: "address" }, { name: "relayFeeBPS", type: "uint256" }] }],
+      withdrawal.data,
+    );
+  } catch {
+    throw new RelayError("Invalid withdrawal request.");
+  }
+  if (fee !== 0n) throw new RelayError("This relayer charges no fee.");
+  // The proof itself (nullifier, roots, context binding recipient and amount) is checked on-chain;
+  // write() simulates first, so an invalid proof costs the relayer no gas.
+  const wallet = relayerWallet();
+  if ((await publicClient.getBalance({ address: wallet.account.address })) < MIN_RELAYER_BALANCE_TO_RELAY) throw new RelayError("The relayer is out of gas funds.", 503);
+  return write(wallet, {
+    address: PRIVACY_POOLS.entrypoint,
+    abi: relayAbi,
+    functionName: "relay",
+    args: [
+      withdrawal,
+      {
+        pA: [BigInt(proof.pA[0]), BigInt(proof.pA[1])],
+        pB: [
+          [BigInt(proof.pB[0][0]), BigInt(proof.pB[0][1])],
+          [BigInt(proof.pB[1][0]), BigInt(proof.pB[1][1])],
+        ],
+        pC: [BigInt(proof.pC[0]), BigInt(proof.pC[1])],
+        pubSignals: proof.pubSignals.map(BigInt) as Bigs<8>,
+      },
+      PRIVACY_POOLS.pools[req.venue].scope,
+    ],
   });
+}
+
+/** Contract revert name (e.g. IncorrectASPRoot), which clients use to retry or explain. */
+function revertName(e: unknown): string | undefined {
+  if (!(e instanceof BaseError)) return undefined;
+  const reverted = e.walk((err) => err instanceof ContractFunctionRevertedError);
+  return reverted instanceof ContractFunctionRevertedError ? reverted.data?.errorName : undefined;
 }
 
 function parse(body: unknown): RelayRequest {
@@ -115,17 +149,21 @@ export async function POST(request: Request) {
     if (!IS_FORK && !allow(`${req.kind}:${ip}`, req.kind === "gas" ? MAX_GAS_PER_IP : MAX_WITHDRAW_PER_IP)) {
       throw new RelayError("Too many requests. Try again later.", 429);
     }
-    if (req.kind === "gas" && !IS_FORK) {
+    if (!IS_FORK) {
       const now = Date.now();
-      globalGas = globalGas.filter((t) => now - t < WINDOW_MS);
-      if (globalGas.length >= MAX_GAS_PER_WINDOW) throw new RelayError("The relayer is busy. Try again later.", 429);
-      globalGas.push(now);
+      const recent = (req.kind === "gas" ? globalGas : globalWithdraws).filter((t) => now - t < WINDOW_MS);
+      if (recent.length >= (req.kind === "gas" ? MAX_GAS_PER_WINDOW : MAX_WITHDRAW_PER_WINDOW)) throw new RelayError("The relayer is busy. Try again later.", 429);
+      recent.push(now);
+      if (req.kind === "gas") globalGas = recent;
+      else globalWithdraws = recent;
     }
     const hash = await enqueue(() => (req.kind === "gas" ? dripGas(req.to) : relayWithdraw(req)));
     const receipt = await publicClient.getTransactionReceipt({ hash });
     return Response.json({ hash, block: receipt.blockNumber.toString() });
   } catch (e) {
     if (e instanceof RelayError) return Response.json({ error: e.message }, { status: e.status });
+    const name = revertName(e);
+    if (name) return Response.json({ error: name }, { status: 400 });
     // Never echo raw errors: viem messages can embed the RPC URL (with API keys) and request data.
     const short = e instanceof Error ? (e as Error & { shortMessage?: string }).shortMessage : undefined;
     console.error("relay failed:", short ?? (e instanceof Error ? e.name : "unknown"));

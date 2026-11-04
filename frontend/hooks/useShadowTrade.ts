@@ -2,17 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePoll } from "./usePoll";
-import { BaseError, erc20Abi, parseUnits, type Address, type Hex, type LocalAccount, type WalletClient } from "viem";
+import { BaseError, ContractFunctionRevertedError, erc20Abi, parseUnits, type Address, type Hex, type LocalAccount, type WalletClient } from "viem";
 import { publicClient } from "@/lib/chain";
-import { TOKENS, type Venue } from "@/lib/config";
-import { createBurner, shadowAccountFromSignature, shadowKeyMessage, vaultSecretFromSignature } from "@/lib/keys";
+import { POOL_MIN_DEPOSIT, TOKENS, VENUES, type Venue } from "@/lib/config";
+import { createBurner, masterKeysFromSignature, shadowAccountFromSignature, shadowKeyMessage, vaultSecretFromSignature } from "@/lib/keys";
+import type { MasterKeys } from "@/lib/notes";
 import { fetchPerpMarkets, type PerpMarket } from "@/lib/perpl";
-import { depositToPool, poolLiquidity, privateBalance, signWithdraw } from "@/lib/pool";
-import { relay } from "@/lib/relay";
+import { depositToPool, poolLiquidity, preloadProver, privateBalance, withdrawFromPool } from "@/lib/pool";
 import { enterStealth, exitStealth, type StealthSession, type Step } from "@/lib/session";
 import { clearSession, hasSessionToResume, loadSession, markSessionActive, saveSession } from "@/lib/vault";
 
-export type Balances = Record<Venue, { wallet: bigint; private: bigint; pool: bigint }>;
+/** `private` is spendable now; `pending` is deposited but not yet approved by the ASP. */
+export type Balances = Record<Venue, { wallet: bigint; private: bigint; pending: bigint; pool: bigint }>;
 
 export type Activity = { kind: "idle" } | { kind: "busy"; step: Step } | { kind: "error"; message: string } | { kind: "done"; message: string };
 
@@ -20,15 +21,24 @@ type DepositRecord = { at: number; amount: number };
 
 const LAST_DEPOSIT_KEY = "shadowtrade:last-deposit";
 const EMPTY: Balances = {
-  perpl: { wallet: 0n, private: 0n, pool: 0n },
-  kuru: { wallet: 0n, private: 0n, pool: 0n },
+  perpl: { wallet: 0n, private: 0n, pending: 0n, pool: 0n },
+  kuru: { wallet: 0n, private: 0n, pending: 0n, pool: 0n },
 };
 
 export function friendlyError(e: unknown): string {
-  const raw = e instanceof BaseError ? e.shortMessage : e instanceof Error ? e.message : String(e);
+  // A contract revert's name (e.g. MinimumDepositAmount) lives in the error's cause chain.
+  const reverted = e instanceof BaseError ? e.walk((err) => err instanceof ContractFunctionRevertedError) : null;
+  const errorName = reverted instanceof ContractFunctionRevertedError ? (reverted.data?.errorName ?? "") : "";
+  const raw = `${errorName} ${e instanceof BaseError ? e.shortMessage : e instanceof Error ? e.message : String(e)}`.trim();
   if (/reject|denied|cancel/i.test(raw)) return "You cancelled the request in your wallet.";
   if (/insufficient funds/i.test(raw)) return "Not enough MON for gas in this wallet.";
+  if (/LowBurnerGas/.test(raw)) return "This burner's remaining gas is reserved for exiting. Exit Stealth Mode and start a new session to keep trading.";
   if (/InsufficientBalance/.test(raw)) return "Your private balance is too low for that amount.";
+  if (/IncorrectASPRoot|UnknownStateRoot/.test(raw)) return "The privacy pool just updated. Try again.";
+  if (/NullifierAlreadySpent/.test(raw)) return "Those funds were already withdrawn. Refresh and try again.";
+  if (/PrecommitmentAlreadyUsed/.test(raw)) return "Another deposit landed at the same time. Try again.";
+  if (/MinimumDepositAmount/.test(raw)) return `That deposit is below the pool minimum of ${POOL_MIN_DEPOSIT}.`;
+  if (/CircuitInitialization|FetchArtifact/.test(raw)) return "Couldn't load the zero-knowledge prover. Check your connection and retry.";
   if (/OracleAgeExceedsMax|markPrice/i.test(raw)) return "Perpl prices are updating. Try again in a few seconds.";
   if (/TakerOrderSettlementFailed/.test(raw)) return "The order couldn't fill within your price limit. Try a smaller size.";
   if (/fetch failed|Failed to fetch|HTTP request failed/i.test(raw)) return "Network problem reaching Monad. Check your connection and retry.";
@@ -56,21 +66,19 @@ async function erc20Balance(token: Address, owner: Address) {
   return publicClient.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [owner] });
 }
 
-async function loadBalances(owner: Address, shadow: Address): Promise<Balances> {
-  const venues = Object.keys(TOKENS) as Venue[];
+async function loadBalances(owner: Address, keys: MasterKeys): Promise<Balances> {
   const rows = await Promise.all(
-    venues.map(async (v) => {
-      const t = TOKENS[v].address;
-      const [w, p, pool] = await Promise.all([erc20Balance(t, owner), privateBalance(t, shadow), poolLiquidity(t)]);
-      return [v, { wallet: w, private: p, pool }] as const;
+    VENUES.map(async (v) => {
+      const [w, p, pool] = await Promise.all([erc20Balance(TOKENS[v].address, owner), privateBalance(keys, v), poolLiquidity(v)]);
+      return [v, { wallet: w, private: p.spendable, pending: p.pending, pool }] as const;
     }),
   );
-  return Object.fromEntries(rows) as Balances;
+  return { ...EMPTY, ...Object.fromEntries(rows) };
 }
 
 export function useShadowTrade(wallet: WalletClient | null) {
   // Bound to the wallet that derived it, so switching wallets can never reuse another wallet's key.
-  const [unlocked, setUnlocked] = useState<{ owner: Address; account: LocalAccount; vaultSecret: Hex } | null>(null);
+  const [unlocked, setUnlocked] = useState<{ owner: Address; account: LocalAccount; keys: MasterKeys; vaultSecret: Hex } | null>(null);
   const [session, setSession] = useState<StealthSession | null>(null);
   const [markets, setMarkets] = useState<PerpMarket[]>([]);
   const [marketsError, setMarketsError] = useState<string | null>(null);
@@ -79,7 +87,9 @@ export function useShadowTrade(wallet: WalletClient | null) {
   const busy = useRef(false);
 
   const address = wallet?.account?.address ?? null;
-  const shadow = unlocked && unlocked.owner === address ? unlocked.account : null;
+  const mine = unlocked && unlocked.owner === address ? unlocked : null;
+  const shadow = mine?.account ?? null;
+  const keys = mine?.keys ?? null;
 
   const reloadMarkets = useCallback(() => {
     fetchPerpMarkets()
@@ -92,7 +102,7 @@ export function useShadowTrade(wallet: WalletClient | null) {
 
   useEffect(reloadMarkets, [reloadMarkets]);
 
-  const balancePoll = usePoll(address && shadow ? () => loadBalances(address, shadow.address) : null, 6000, `${address}:${shadow?.address}`);
+  const balancePoll = usePoll(address && keys ? () => loadBalances(address, keys) : null, 6000, `${address}:${shadow?.address}`);
   const balances = balancePoll.data ?? EMPTY;
   const balancesLoaded = balancePoll.data !== null;
   const refresh = balancePoll.refresh;
@@ -123,7 +133,8 @@ export function useShadowTrade(wallet: WalletClient | null) {
       const signature = await wallet.signMessage({ account: wallet.account, message: shadowKeyMessage(wallet.account.address) });
       const account = shadowAccountFromSignature(signature);
       const vaultSecret = vaultSecretFromSignature(signature);
-      setUnlocked({ owner: wallet.account.address, account, vaultSecret });
+      setUnlocked({ owner: wallet.account.address, account, keys: masterKeysFromSignature(signature), vaultSecret });
+      preloadProver();
       const saved = await loadSession(account.address, vaultSecret).catch(() => null);
       if (!saved) markSessionActive(wallet.account.address, false);
       if (saved) {
@@ -140,37 +151,43 @@ export function useShadowTrade(wallet: WalletClient | null) {
   const deposit = useCallback(
     (venue: Venue, amount: number) =>
       run(async (onStep) => {
-        if (!wallet || !shadow) throw new Error("Unlock your private balance first.");
+        if (!wallet || !keys) throw new Error("Unlock your private balance first.");
         const t = TOKENS[venue];
         onStep({ index: 1, total: 2, label: `Approve ${t.symbol} in your wallet` });
-        await depositToPool(wallet, t.address, parseUnits(String(amount), t.decimals), shadow.address);
+        await depositToPool(wallet, keys, venue, parseUnits(String(amount), t.decimals));
         const record = { at: Date.now(), amount };
         writeLastDeposit(record);
         setLastDeposit(record);
         return `Deposited ${amount.toLocaleString()} ${t.symbol} into your private balance.`;
       }),
-    [run, wallet, shadow],
+    [run, wallet, keys],
   );
 
   const withdraw = useCallback(
     (venue: Venue, amount: number, to: Address) =>
       run(async (onStep) => {
-        if (!shadow) throw new Error("Unlock your private balance first.");
+        if (!keys) throw new Error("Unlock your private balance first.");
         const t = TOKENS[venue];
-        onStep({ index: 1, total: 1, label: "Relaying your private withdrawal" });
-        const req = await signWithdraw(shadow, t.address, parseUnits(String(amount), t.decimals), to);
-        await relay({ kind: "withdraw", ...req });
+        onStep({ index: 1, total: 1, label: "Proving and relaying your private withdrawal" });
+        await withdrawFromPool({
+          keys,
+          venue,
+          amount: parseUnits(String(amount), t.decimals),
+          recipient: to,
+          // Each note spent is its own proof and transaction.
+          onPart: (index, total) => total > 1 && onStep({ index, total, label: `Proving and relaying part ${index} of ${total}` }),
+        });
         return `Sent ${amount.toLocaleString()} ${t.symbol} to ${to.slice(0, 6)}…${to.slice(-4)}.`;
       }),
-    [run, shadow],
+    [run, keys],
   );
 
   const enter = useCallback(
     (venue: Venue, bucket: number) =>
       run(async (onStep) => {
-        if (!shadow || !unlocked) throw new Error("Unlock your private balance first.");
+        if (!shadow || !unlocked || !keys) throw new Error("Unlock your private balance first.");
         await enterStealth({
-          shadow,
+          keys,
           venue,
           bucket,
           onStep,
@@ -184,21 +201,21 @@ export function useShadowTrade(wallet: WalletClient | null) {
         });
         return "Stealth Mode is on. You're trading from a fresh wallet.";
       }),
-    [run, shadow, unlocked],
+    [run, shadow, unlocked, keys],
   );
 
   const exit = useCallback(
     () =>
       run(async (onStep) => {
-        if (!shadow || !session) throw new Error("No active stealth session.");
+        if (!shadow || !keys || !session) throw new Error("No active stealth session.");
         const t = TOKENS[session.venue];
-        const returned = await exitStealth({ session, shadow: shadow.address, perpMarkets: markets, onStep });
+        const returned = await exitStealth({ session, keys, perpMarkets: markets, onStep });
         clearSession(shadow.address);
         if (address) markSessionActive(address, false);
         setSession(null);
         return `Stealth session closed. ${(Number(returned) / 10 ** t.decimals).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${t.symbol} is back in your private balance and the burner key is wiped.`;
       }),
-    [run, shadow, session, markets, address],
+    [run, shadow, keys, session, markets, address],
   );
 
   return {

@@ -5,7 +5,7 @@ const faqs = [
   ["Do you ever hold my funds?", "No. Keys are created in your browser and never sent to us, so we can't move your funds. Exit always returns them to your private balance, and you withdraw to any address you choose."],
   ["What do I need to start?", `A wallet with a little MON for gas on Monad testnet, plus AUSD for perps${KURU_ENABLED ? " or USDC for spot" : ""}.`],
   ["What happens if I close the tab?", "Nothing is lost. Your session is saved encrypted on this device, so just sign again to resume. It is erased when you exit."],
-  ["Is it fully anonymous?", "It breaks the link between your wallet and your trades, but not everything. The testnet pool is a development pool, not zero-knowledge yet, so its deposit and withdraw records are public, and your trading style can still be fingerprinted."],
+  ["Is it fully anonymous?", "It breaks the on-chain link between your wallet and your trades. The private balance is a 0xbow Privacy Pool: your deposit is public, but each burner is funded by a zero-knowledge proof that only shows it came from someone in the pool. Privacy is only as strong as the pool is busy, and your trading style can still be fingerprinted."],
   ["Which markets can I trade?", `Perpl perps: BTC up to 15×, ETH 12×, SOL 10×, plus MON, ZEC, LIT, PUMP and NEAR. ${KURU_ENABLED ? "Kuru spot: WETH/USDC and cbBTC/USDC." : "Spot on Kuru (WETH/USDC, cbBTC/USDC) is coming soon."}`],
   ["Is this legal?", "ShadowTrade is non-custodial software for commercial privacy, like not publishing your positions to everyone. Rules differ by jurisdiction and this is not legal advice."],
 ] as const;

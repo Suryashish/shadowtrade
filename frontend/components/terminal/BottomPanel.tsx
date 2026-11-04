@@ -135,6 +135,7 @@ function PrivateBalances({ app, busy }: { app: ShadowTrade; busy: boolean }) {
         </div>
         <Stat label="Wallet" value={formatToken(b.wallet)} />
         <Stat label="Pool size" value={formatToken(b.pool, 6, 0)} />
+        {b.pending > 0n && <Stat label="Awaiting pool approval" value={formatToken(b.pending)} />}
       </div>
       <div className="border border-border p-3">
         <div className="mb-2.5 flex items-center justify-between">

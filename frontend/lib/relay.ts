@@ -1,7 +1,8 @@
 import type { Address, Hash } from "viem";
-import type { WithdrawRequest } from "./pool";
+import type { Venue } from "./config";
+import type { SolidityProof, WithdrawalData } from "./notes";
 
-export type RelayRequest = { kind: "gas"; to: Address } | ({ kind: "withdraw" } & WithdrawRequest);
+export type RelayRequest = { kind: "gas"; to: Address } | { kind: "withdraw"; venue: Venue; withdrawal: WithdrawalData; proof: SolidityProof };
 
 export type RelayResponse = { hash: Hash; block: string };
 
