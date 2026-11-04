@@ -31,6 +31,37 @@ Why a stand-in: the plan was to use Unlink for the private balance, but Unlink d
 
 What ShadowPool does give you: the main wallet never interacts with the burner. Balances belong to a browser-derived shadow key, and withdrawals to the burner are signed by that key (EIP-712) and submitted by the relayer. What it does not give you: the shadow key's deposits and withdrawals are linkable on-chain, because there is no ZK mixing. Treat this build as a working demo of the flow, not as production privacy.
 
+## Features
+
+**Terminal (`/trade`)**
+
+- **Live candles** (1m to 1D) on TradingView Lightweight Charts.
+- **Live order book** with depth and spread, and a **recent trades** feed.
+- **Pair selector with search** across all Perpl markets plus Kuru WETH/USDC and cbBTC/USDC.
+- **Perps order ticket** with leverage and estimated liquidation price; **positions table** with market close.
+- **Spot swaps** with quote and price impact; **spot holdings**.
+- **Private balance** deposit and withdraw forms.
+- **Stealth flow:** a 4-step onboarding in the order panel (connect, deposit to private balance, pick a bucket, Enter Stealth Mode), then trade, then Exit Stealth Mode.
+- **Encrypted session resume:** the burner key is encrypted (AES-GCM, key derived from your unlock signature) and saved before any funds move. After a refresh, "Sign to resume" restores the same burner. The key is cleared on exit.
+- **Silent wallet reconnect** after reload (`eth_accounts`, no popup).
+- Bottom panel tabs (positions, holdings, session, balance), toasts, **mobile view switcher**, dark and light themes.
+
+**Routes**
+
+| Route | Page |
+|---|---|
+| `/` | Landing page (hero, problem, how it works, privacy, why Monad, FAQ) |
+| `/trade` | The trading terminal |
+
+Also: `app/icon.svg` (favicon) and `app/opengraph-image.tsx` (share card; set `NEXT_PUBLIC_SITE_URL` when deploying).
+
+## Data sources
+
+- **Perpl REST** (candles, book, ticker, markets) goes through server proxies, because Perpl's REST API sends no CORS headers: `api/perpl/markets` and the cached `api/perpl/market-data/[...path]`.
+- **Perpl WebSocket** market data goes through `api/perpl/stream`, a server-side WebSocket to Server-Sent Events relay, because Perpl's WS rejects browser origins with 403.
+- **Kuru** candles, trades and 24h stats come from the public REST API (`https://api.testnet.kuru.io`); the spot order book is read on-chain via `getL2Book`.
+- Account state, positions and execution are on-chain through viem.
+
 ## Architecture
 
 | Component | Role |
@@ -40,12 +71,18 @@ What ShadowPool does give you: the main wallet never interacts with the burner. 
 | `frontend/lib/keys.ts` | Browser-derived shadow key and in-memory burner key creation |
 | `frontend/lib/pool.ts` | Pool deposit and signed withdrawals (**Unlink swap point**) |
 | `frontend/lib/perpl.ts` | Perpl account, deposit, open and close positions, market metadata |
-| `frontend/app/api/perpl/markets/route.ts` | Cached server proxy for Perpl market metadata (Perpl's API sends no CORS headers, so the browser cannot call it directly; live prices are read on-chain) |
-| `frontend/lib/kuru.ts` | Kuru quotes and spot swaps through AccountCore. Swaps refuse partial fills and anything over 2% price impact vs the top of book |
-| `frontend/lib/chain.ts` | viem clients, Monad pacing and gas padding |
+| `frontend/lib/perplFeed.ts` | Client for Perpl candles, book, trades and the SSE stream |
+| `frontend/lib/kuru.ts` | Kuru quotes and spot swaps through AccountCore. Swaps refuse partial fills and anything over 2% price impact vs the top of book (fair-price guard) |
+| `frontend/lib/kuruData.ts` | Kuru public REST (candles, trades, 24h stats) and on-chain `getL2Book` |
+| `frontend/lib/vault.ts` | AES-GCM encrypted burner-key storage for session resume |
+| `frontend/lib/chain.ts` | viem clients (`cacheTime: 0`), Monad 3-block pacing and gas padding |
 | `frontend/lib/privacy.ts` | Privacy score and checks |
 | `frontend/lib/relay.ts`, `frontend/app/api/relay/route.ts` | Relayer client and server route (gas drip, withdrawal relay) |
-| `frontend/components`, `frontend/hooks` | Next.js UI and hooks (`useWallet`, `useShadowTrade`, `usePoll`) |
+| `frontend/app/api/perpl/markets`, `market-data/[...path]`, `stream` | Perpl metadata proxy, cached REST proxy, WebSocket-to-SSE relay |
+| `frontend/app/page.tsx`, `frontend/components/landing/*` | Landing page |
+| `frontend/app/trade/page.tsx`, `frontend/components/terminal/*` | Terminal: TopNav, MarketBar, PriceChart, OrderBook, RecentTrades, OrderPanel, PerpsOrderForm, SpotOrderForm, PositionsTable, SpotHoldings, BalanceForms, BottomPanel, Toast |
+| `frontend/components/brand/Logo.tsx` | Logo |
+| `frontend/hooks/*` | `useWallet`, `useShadowTrade`, `useMarketData`, `usePoll` |
 | `contracts/src/ShadowPool.sol` | Pool: `deposit`, EIP-712 signed `withdraw`, nonces, deadlines |
 | `scripts/fork.sh`, `scripts/fork-setup.sh` | Local Monad testnet fork with real Perpl and Kuru |
 | `frontend/scripts/e2e.ts` | Headless end-to-end test against the fork (`pnpm e2e`) |
@@ -92,6 +129,8 @@ NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545
 # optional, fork only: enables a "Use test wallet" button (hooks/useWallet.ts) instead of MetaMask.
 # Use anvil account #1 (0x70997970C51812dc3A010C7d01b50e0d17dc79C8)
 NEXT_PUBLIC_DEV_WALLET_KEY=0x...
+# optional, for deployments: absolute base URL for the share card
+NEXT_PUBLIC_SITE_URL=
 ```
 
 If you use the test wallet, also run `scripts/fork-setup.sh 0x70997970C51812dc3A010C7d01b50e0d17dc79C8` so that address is funded. The button is hidden unless the RPC URL is localhost.
@@ -100,7 +139,7 @@ If you use the test wallet, also run `scripts/fork-setup.sh 0x70997970C51812dc3A
 cd frontend && pnpm install && pnpm dev
 ```
 
-Other scripts: `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm e2e`.
+Open `http://localhost:3000` for the landing page and `/trade` for the terminal. Other scripts: `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm e2e`.
 
 ### B. Live Monad testnet
 
@@ -110,18 +149,20 @@ Set `NEXT_PUBLIC_RPC_URL=https://testnet-rpc.monad.xyz` and a funded `RELAYER_PR
 
 ```bash
 cd contracts && forge test        # 7 ShadowPool tests
-cd frontend && pnpm e2e           # needs the fork (A) and the dev server running
+cd frontend && pnpm e2e           # all checks; needs the fork (A) and the dev server running
 ```
 
 A frozen-clock fork has no market makers, so repeated testing can drain one side of an order book. Restart the fork (`scripts/fork.sh` then `scripts/fork-setup.sh`) to reset it.
 
 The 7 contract tests cover: deposit credit, relayed withdraw to a burner, replay, wrong signer, redirected recipient, expired signature, and overdraw.
 
-**Verified browser UI test (Playwright, headless Chromium, against the fork):**
+**Browser flows (Playwright, headless Chromium, against the fork):**
 
-- Perps flow: deposit 5,000 AUSD (4.8s), Enter Stealth (11.9s on the 1s-block fork), open ETH 5x long (0.8s), close (0.3s), Exit Stealth (15.4s), returning 999.18 of 1,000 AUSD.
-- Spot flow: deposit USDC, enter, buy WETH, exit.
-- Zero console errors; dark, light and mobile layouts checked.
+- Perps: open, close and Exit Stealth returned 999.18 of 1,000 AUSD.
+- Spot: buy and Exit Stealth returned 499.88 of 500 USDC.
+- Refresh mid-session shows "Sign to resume", which restores the same burner; exit then returns 500 of 500 AUSD.
+- No horizontal overflow at 1920, 1440, 1280, 1024 and 390 px widths; dark and light themes checked.
+- Zero console errors.
 
 **Verified e2e script result (local fork):**
 
@@ -132,7 +173,14 @@ The 7 contract tests cover: deposit credit, relayed withdraw to a burner, replay
 - No transfers from the main wallet to any burner.
 - 6 of 6 relayer abuse cases rejected: re-funding a burner, gas to an existing wallet, tampered amount, redirected recipient, overdraw, unknown token.
 
-## Limitations and next steps
+## Known limitations
+
+- Market orders only (no limit orders).
+- Kuru testnet liquidity is thin, so spot charts are mostly flat.
+- On the local fork, the book and chart show live testnet data while trades execute against the fork's snapshot, so displayed and executed prices can differ.
+- The pool is a non-ZK dev stand-in (see above).
+
+## Next steps
 
 - Swap ShadowPool for Unlink (ZK pool) via `lib/pool.ts` once its testnet access works. Until then deposits and withdrawals by the shadow key are linkable.
 - Testnet collateral (AUSD, Kuru USDC) must come from the Perpl and Kuru teams for live-testnet runs.

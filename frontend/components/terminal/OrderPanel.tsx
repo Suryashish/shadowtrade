@@ -35,7 +35,7 @@ function StepRow({ n, title, done, active, summary, children }: { n: number; tit
         >
           {done ? "✓" : n}
         </span>
-        <span className={`text-[13px] font-medium ${active || done ? "text-text" : "text-faint"}`}>{title}</span>
+        <span className={`text-[13px] font-medium ${active || done ? "text-text" : "text-muted"}`}>{title}</span>
         {done && summary && <span className="ml-auto truncate text-xs text-muted">{summary}</span>}
       </div>
       {active && children && <div className="animate-fade-in mt-3 pl-[30px]">{children}</div>}
@@ -71,11 +71,14 @@ function PrivacyMeter({ report }: { report: PrivacyReport }) {
       </div>
       <ul className="mt-2 space-y-1">
         {report.checks.map((c) => (
-          <li key={c.label} className="flex gap-1.5 text-[11px] leading-snug" title={c.detail}>
+          <li key={c.label} className="flex gap-1.5 text-[11px] leading-snug">
             <span aria-hidden className={c.ok ? "text-success" : "text-warning"}>
               {c.ok ? "✓" : "!"}
             </span>
-            <span className={c.ok ? "text-muted" : "text-text"}>{c.label}</span>
+            <span className="min-w-0">
+              <span className={c.ok ? "text-muted" : "text-text"}>{c.label}</span>
+              <span className="block text-faint">{c.detail}</span>
+            </span>
           </li>
         ))}
       </ul>
@@ -108,7 +111,7 @@ function EnterStealth({ app, venue, busy }: { app: ShadowTrade; venue: Venue; bu
             moves to it from your private balance. Gas comes from the shared relayer.
           </li>
           <li>{venue === "perpl" ? "A Perpl margin account opens" : "Funds are deposited into Kuru"} from the burner.</li>
-          <li className="text-warning">Keep this tab open until you exit. The burner key is never saved.</li>
+          <li>The burner key is saved encrypted on this device, so a refresh never loses funds. It&apos;s erased when you exit.</li>
         </ul>
         <div className="grid grid-cols-2 gap-2">
           <button onClick={() => setConfirming(false)} className="h-10 rounded-lg border border-border text-sm text-muted hover:text-text">
@@ -141,6 +144,7 @@ function EnterStealth({ app, venue, busy }: { app: ShadowTrade; venue: Venue; bu
               key={b}
               onClick={() => setBucket(b)}
               disabled={b > available}
+              title={b > available ? "Your private balance is below this size" : undefined}
               aria-pressed={bucket === b}
               className={`tabular h-8 rounded-md border font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
                 bucket === b ? "border-accent bg-accent-soft text-accent" : "border-border text-muted hover:text-text"
@@ -190,8 +194,10 @@ function Onboarding({ app, wallet, venue, busy }: { app: ShadowTrade; wallet: Wa
           </div>
         </StepRow>
         <StepRow n={2} title="Unlock private balance" done={unlocked} active={current === 2} summary="Unlocked">
-          <p className="mb-2.5 text-xs leading-relaxed text-muted">Sign a free message to derive your private key on this device. No transaction.</p>
-          <PrimaryButton onClick={app.unlock}>Sign to unlock</PrimaryButton>
+          <p className="mb-2.5 text-xs leading-relaxed text-muted">
+            {app.resumable ? "You have a stealth session in progress on this device." : "Sign a free message to derive your private key on this device. No transaction."}
+          </p>
+          <PrimaryButton onClick={app.unlock}>{app.resumable ? "Sign to resume session" : "Sign to unlock"}</PrimaryButton>
         </StepRow>
         <StepRow
           n={3}
@@ -209,6 +215,40 @@ function Onboarding({ app, wallet, venue, busy }: { app: ShadowTrade; wallet: Wa
           <EnterStealth app={app} venue={venue} busy={busy} />
         </StepRow>
       </ol>
+    </div>
+  );
+}
+
+const ENTER_PREFIXES = ["Creating a fresh burner", "Sending gas", "Moving ", "Opening a Perpl", "Depositing into Kuru"];
+
+function EnteringCard({ venue, index }: { venue: Venue; index: number }) {
+  const steps = ["Creating a fresh burner wallet", "Sending gas", "Moving funds from your private balance", venue === "perpl" ? "Opening a Perpl margin account" : "Depositing into Kuru"];
+  return (
+    <div className="flex-1 p-3" role="status" aria-live="polite">
+      <div className="rounded-lg border border-border bg-surface-2 p-3">
+        <p className="text-[13px] font-semibold">Setting up your stealth session</p>
+        <p className="mt-0.5 text-xs text-muted">This takes a few seconds. Trading unlocks when it&apos;s ready.</p>
+        <ol className="mt-3 space-y-2">
+          {steps.map((label, i) => {
+            const n = i + 1;
+            const done = n < index;
+            const active = n === index;
+            return (
+              <li key={label} className="flex items-center gap-2.5 text-xs">
+                <span
+                  aria-hidden
+                  className={`grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-semibold ${
+                    done ? "bg-success-soft text-success" : active ? "animate-pulse bg-accent text-accent-text" : "bg-surface-3 text-faint"
+                  }`}
+                >
+                  {done ? "✓" : n}
+                </span>
+                <span className={active ? "font-medium text-text" : done ? "text-muted" : "text-faint"}>{label}</span>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
     </div>
   );
 }
@@ -269,8 +309,12 @@ export function OrderPanel({
   const busy = app.activity.kind === "busy";
   const session = app.session;
 
+  const entering = app.activity.kind === "busy" && ENTER_PREFIXES.some((p) => app.activity.kind === "busy" && app.activity.step.label.startsWith(p));
+  const enterIndex = app.activity.kind === "busy" ? app.activity.step.index : 1;
+
   let body: ReactNode;
-  if (!session) body = <Onboarding app={app} wallet={wallet} venue={market.venue} busy={busy} />;
+  if (entering) body = <EnteringCard venue={session?.venue ?? market.venue} index={enterIndex} />;
+  else if (!session) body = <Onboarding app={app} wallet={wallet} venue={market.venue} busy={busy} />;
   else if (session.venue !== market.venue)
     body = (
       <div className="grid flex-1 place-items-center p-6 text-center">
@@ -303,7 +347,7 @@ export function OrderPanel({
             <span className="size-1.5 animate-pulse rounded-full bg-accent" /> Stealth
           </span>
         ) : (
-          <span className="text-[11px] text-faint">Market orders</span>
+          <span className="text-[11px] text-muted">Market orders</span>
         )}
       </div>
       {body}

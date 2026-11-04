@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { VENUES, type Venue } from "@/lib/config";
 import type { MarketInfo, MarketStats } from "@/lib/market";
 
-type Venue = "perpl" | "kuru";
 type Entry = { info: MarketInfo; stats: MarketStats | null };
 
 const usdCompact = new Intl.NumberFormat(undefined, {
@@ -121,7 +121,7 @@ function MarketPicker({
     <div
       ref={rootRef}
       onKeyDown={onKeyDown}
-      className="absolute left-0 top-full z-30 mt-1 w-[420px] max-w-[calc(100vw-24px)] rounded-xl border border-border-strong bg-surface shadow-pop"
+      className="fixed inset-x-3 top-[104px] z-40 rounded-xl sm:absolute sm:inset-x-auto sm:left-0 sm:top-full sm:mt-1 sm:w-[420px] border border-border-strong bg-surface shadow-pop"
     >
       <div className="border-b border-border p-2">
         <input
@@ -142,7 +142,7 @@ function MarketPicker({
         <span className="text-right">24h change</span>
         <span className="text-right">24h volume</span>
       </div>
-      <div role="listbox" aria-label="Markets" className="scroll-thin max-h-72 overflow-y-auto pb-1">
+      <div role="listbox" aria-label="Markets" className="scroll-thin max-h-[min(380px,calc(70vh-90px))] overflow-y-auto pb-1">
         {filtered.length === 0 && <div className="px-3 py-6 text-center text-xs text-faint">No markets found</div>}
         {filtered.map((m, i) => {
           const isSel = m.info.key === selected.key;
@@ -164,7 +164,7 @@ function MarketPicker({
                 <Badge base={m.info.base} size={18} />
                 <span className="truncate font-medium text-text">{m.info.name}</span>
                 {m.info.maxLeverage !== null && (
-                  <span className="rounded bg-surface-3 px-1 font-mono text-[10px] text-muted">
+                  <span className="hidden rounded bg-surface-3 px-1 sm:inline font-mono text-[10px] text-muted">
                     {m.info.maxLeverage}x
                   </span>
                 )}
@@ -191,6 +191,7 @@ export function MarketBar({
   onSelect,
   venue,
   onVenueChange,
+  midPrice,
 }: {
   markets: Entry[];
   selected: MarketInfo;
@@ -198,36 +199,37 @@ export function MarketBar({
   onSelect: (key: string) => void;
   venue: Venue;
   onVenueChange: (v: Venue) => void;
+  midPrice?: number | null;
 }) {
   const [open, setOpen] = useState(false);
   const change = stats?.change24h ?? null;
-  const price = stats?.price ?? null;
+  const last = stats?.price ?? null;
+  const useMid = venue === "kuru" && midPrice != null;
+  const price = useMid ? midPrice : last;
+  const thin = (stats?.volume24h ?? Infinity) < 100;
   const cc = changeColor(change);
   const d = selected.priceDecimals;
 
   return (
-    <div className="scroll-thin flex h-14 items-center gap-6 overflow-x-auto border-b border-border bg-surface px-3">
-      <div role="tablist" aria-label="Venue" className="flex h-8 shrink-0 items-center rounded-md bg-surface-2 p-0.5">
-        {(
-          [
-            ["perpl", "Perps"],
-            ["kuru", "Spot"],
-          ] as const
-        ).map(([v, label]) => (
-          <button
-            key={v}
-            type="button"
-            role="tab"
-            aria-selected={venue === v}
-            onClick={() => onVenueChange(v)}
-            className={`h-7 rounded px-3 text-xs font-medium transition-colors ${
-              venue === v ? "bg-surface text-text shadow-card" : "text-muted hover:text-text"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <div className="relative flex h-14 items-center gap-3 border-b border-border bg-surface px-3 sm:gap-6">
+      {VENUES.length > 1 && (
+        <div role="tablist" aria-label="Venue" className="flex h-8 shrink-0 items-center rounded-md bg-surface-2 p-0.5">
+          {VENUES.map((v) => [v, v === "perpl" ? "Perps" : "Spot"] as const).map(([v, label]) => (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={venue === v}
+              onClick={() => onVenueChange(v)}
+              className={`h-7 rounded px-2 text-xs font-medium transition-colors sm:px-3 ${
+                venue === v ? "bg-surface text-text shadow-card" : "text-muted hover:text-text"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="relative shrink-0">
         <button
@@ -236,10 +238,12 @@ export function MarketBar({
           aria-expanded={open}
           aria-label={`Select market, current ${selected.name}`}
           onClick={() => setOpen((o) => !o)}
-          className="flex h-9 items-center gap-2 rounded-md px-2 hover:bg-surface-2"
+          className="flex h-9 items-center gap-2 rounded-md px-1 hover:bg-surface-2 sm:px-2"
         >
-          <Badge base={selected.base} />
-          <span className="text-[15px] font-semibold text-text">{selected.name}</span>
+          <span className="hidden sm:inline-flex">
+            <Badge base={selected.base} />
+          </span>
+          <span className="whitespace-nowrap text-sm font-semibold text-text sm:text-[15px]">{selected.name}</span>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="text-muted">
             <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -257,16 +261,27 @@ export function MarketBar({
         )}
       </div>
 
-      <span className={`shrink-0 font-mono text-lg font-medium tabular ${cc}`}>{num(price, d)}</span>
+      <span className={`shrink-0 whitespace-nowrap font-mono text-base font-medium tabular sm:text-lg ${cc}`}>
+        {num(price, d)}
+      </span>
 
-      <div className="flex shrink-0 items-center gap-6">
-        {venue === "perpl" && <Stat label="Mark">{num(stats?.mark ?? null, d)}</Stat>}
-        {stats?.oracle != null && <Stat label="Oracle">{num(stats.oracle, d)}</Stat>}
-        <Stat label="24h Change">
-          <span className={cc}>{pct(change)}</span>
-        </Stat>
-        <Stat label="24h Volume">{usd(stats?.volume24h ?? null)}</Stat>
-        {stats?.openInterest != null && <Stat label="Open Interest">{usd(stats.openInterest)}</Stat>}
+      <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [mask-image:linear-gradient(to_right,black_calc(100%-32px),transparent)] [&::-webkit-scrollbar]:hidden">
+        <div className="flex w-max items-center gap-6 pr-6">
+          {useMid && <Stat label="Last trade">{num(last, d)}</Stat>}
+          {venue === "perpl" && <span className="hidden sm:contents"><Stat label="Mark">{num(stats?.mark ?? null, d)}</Stat></span>}
+          {stats?.oracle != null && <span className="hidden sm:contents"><Stat label="Oracle">{num(stats.oracle, d)}</Stat></span>}
+          <Stat label="24h Change">
+            {thin ? (
+              <span className="text-faint" title="Very little trading in the last 24h">
+                {pct(change)}
+              </span>
+            ) : (
+              <span className={cc}>{pct(change)}</span>
+            )}
+          </Stat>
+          <Stat label="24h Volume">{usd(stats?.volume24h ?? null)}</Stat>
+          {stats?.openInterest != null && <Stat label="Open Interest">{usd(stats.openInterest)}</Stat>}
+        </div>
       </div>
     </div>
   );

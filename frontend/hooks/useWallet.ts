@@ -44,6 +44,29 @@ async function ensureMonad(provider: EIP1193Provider) {
   }
 }
 
+const CONNECTION_KEY = "shadowtrade:connection";
+type Connection = "injected" | "dev";
+
+function remember(c: Connection | null) {
+  try {
+    if (c) localStorage.setItem(CONNECTION_KEY, c);
+    else localStorage.removeItem(CONNECTION_KEY);
+  } catch {
+    // Reconnecting on reload is a convenience only.
+  }
+}
+
+function recall(): Connection | null {
+  try {
+    const v = localStorage.getItem(CONNECTION_KEY);
+    return v === "injected" || v === "dev" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+const devWallet = () => createWalletClient({ account: privateKeyToAccount(DEV_KEY as `0x${string}`), chain: monadTestnet, transport: http(RPC_URL) });
+
 export function useWallet(): WalletState {
   const [wallet, setWallet] = useState<WalletClient | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -61,6 +84,7 @@ export function useWallet(): WalletState {
       const [address] = (await provider.request({ method: "eth_requestAccounts" })) as Address[];
       await ensureMonad(provider);
       setWallet(createWalletClient({ account: address, chain: monadTestnet, transport: custom(provider) }));
+      remember("injected");
     } catch (e) {
       setError(e instanceof Error && /reject|denied/i.test(e.message) ? "Connection was cancelled." : "Couldn't connect your wallet. Try again.");
     } finally {
@@ -70,8 +94,32 @@ export function useWallet(): WalletState {
 
   const connectDev = useCallback(() => {
     if (!DEV_WALLET_AVAILABLE) return;
-    const account = privateKeyToAccount(DEV_KEY as `0x${string}`);
-    setWallet(createWalletClient({ account, chain: monadTestnet, transport: http(RPC_URL) }));
+    setWallet(devWallet());
+    remember("dev");
+  }, []);
+
+  // Reconnect silently after a reload: eth_accounts never opens a wallet popup.
+  useEffect(() => {
+    let cancelled = false;
+    const restore = async () => {
+      const last = recall();
+      if (last === "dev" && DEV_WALLET_AVAILABLE) {
+        await Promise.resolve();
+        if (!cancelled) setWallet(devWallet());
+        return;
+      }
+      const provider = window.ethereum;
+      if (last !== "injected" || !provider) return;
+      const [address] = ((await provider.request({ method: "eth_accounts" }).catch(() => [])) as Address[]) ?? [];
+      const chainId = (await provider.request({ method: "eth_chainId" }).catch(() => null)) as string | null;
+      if (!cancelled && address && chainId && Number(chainId) === monadTestnet.id) {
+        setWallet(createWalletClient({ account: address, chain: monadTestnet, transport: custom(provider) }));
+      }
+    };
+    restore();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -93,6 +141,9 @@ export function useWallet(): WalletState {
     error,
     connect,
     connectDev,
-    disconnect: () => setWallet(null),
+    disconnect: () => {
+      remember(null);
+      setWallet(null);
+    },
   };
 }

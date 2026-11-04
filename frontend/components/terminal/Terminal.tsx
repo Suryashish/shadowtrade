@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import { perpInfo, SPOT_TERMINAL_MARKETS, useCandles, useMarketStats, useOrderBook, useTrades, type TerminalMarket } from "@/hooks/useMarketData";
-import { useShadowTrade } from "@/hooks/useShadowTrade";
-import { useWallet } from "@/hooks/useWallet";
+import { useShadowTrade, type ShadowTrade } from "@/hooks/useShadowTrade";
+import { useWallet, type WalletState } from "@/hooks/useWallet";
 import type { Venue } from "@/lib/config";
-import type { Resolution } from "@/lib/market";
+import type { MarketStats, OrderBook as OrderBookData, Resolution } from "@/lib/market";
 import { BottomPanel } from "./BottomPanel";
 import { MarketBar } from "./MarketBar";
 import { OrderBook } from "./OrderBook";
@@ -18,9 +18,8 @@ import { TopNav } from "./TopNav";
 
 const DEFAULT_PERP = "ETH";
 
-function BookAndTrades({ market }: { market: TerminalMarket }) {
+function BookAndTrades({ market, book }: { market: TerminalMarket; book: OrderBookData | null }) {
   const [tab, setTab] = useState<"book" | "trades">("book");
-  const book = useOrderBook(market);
   const trades = useTrades(market);
   return (
     <Panel className="h-full">
@@ -55,6 +54,85 @@ function ChartPanel({ market }: { market: TerminalMarket }) {
   );
 }
 
+type MobileView = "chart" | "book" | "trade" | "positions";
+
+const MOBILE_VIEWS: { value: MobileView; label: string }[] = [
+  { value: "chart", label: "Chart" },
+  { value: "book", label: "Book" },
+  { value: "trade", label: "Trade" },
+  { value: "positions", label: "Positions" },
+];
+
+function TerminalBody({
+  app,
+  wallet,
+  market,
+  list,
+  stats,
+  marketStats,
+  venue,
+  onVenueChange,
+  onSelect,
+  onSelectPerp,
+}: {
+  app: ShadowTrade;
+  wallet: WalletState;
+  market: TerminalMarket;
+  list: TerminalMarket[];
+  stats: Map<string, MarketStats | null>;
+  marketStats: MarketStats | null;
+  venue: Venue;
+  onVenueChange: (v: Venue) => void;
+  onSelect: (key: string) => void;
+  onSelectPerp: (perpId: number) => void;
+}) {
+  const [view, setView] = useState<MobileView>("chart");
+  const book = useOrderBook(market);
+  const mid = book?.bids[0] && book.asks[0] ? (book.bids[0].price + book.asks[0].price) / 2 : null;
+  // Below lg one panel shows at a time; on desktop the grid shows them all.
+  const pane = (v: MobileView) => (view === v ? "flex" : "hidden lg:flex");
+
+  return (
+    <>
+      <MarketBar
+        markets={list.map((m) => ({ info: m.info, stats: stats.get(m.info.key) ?? null }))}
+        selected={market.info}
+        stats={marketStats}
+        midPrice={mid}
+        onSelect={onSelect}
+        venue={venue}
+        onVenueChange={onVenueChange}
+      />
+      <nav aria-label="Terminal views" className="sticky top-0 z-20 grid grid-cols-4 gap-1 border-b border-border bg-bg/95 p-1 backdrop-blur lg:hidden">
+        {MOBILE_VIEWS.map((v) => (
+          <button
+            key={v.value}
+            onClick={() => setView(v.value)}
+            aria-pressed={view === v.value}
+            className={`h-9 rounded-md text-xs font-medium transition-colors ${view === v.value ? "bg-surface text-text shadow-card" : "text-muted"}`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </nav>
+      <main className="flex flex-1 flex-col gap-1 p-1 lg:grid lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_288px_320px] lg:grid-rows-[minmax(0,1fr)_272px]">
+        <div className={`${pane("chart")} h-[max(480px,calc(100dvh-170px))] flex-col lg:col-start-1 lg:row-start-1 lg:h-auto lg:min-h-0`}>
+          <ChartPanel key={market.info.key} market={market} />
+        </div>
+        <div className={`${pane("trade")} flex-col lg:col-start-3 lg:row-span-2 lg:row-start-1 lg:min-h-0`}>
+          <OrderPanel app={app} wallet={wallet} market={market} priceHint={marketStats?.mark ?? marketStats?.price ?? null} onSwitchVenue={onVenueChange} />
+        </div>
+        <div className={`${pane("book")} h-[max(480px,calc(100dvh-170px))] flex-col lg:col-start-2 lg:row-start-1 lg:h-auto lg:min-h-0`}>
+          <BookAndTrades key={market.info.key} market={market} book={book} />
+        </div>
+        <div className={`${pane("positions")} h-[max(480px,calc(100dvh-170px))] flex-col lg:col-span-2 lg:col-start-1 lg:row-start-2 lg:h-auto lg:min-h-0`}>
+          <BottomPanel key={app.session?.venue ?? "none"} app={app} onSelectPerp={onSelectPerp} />
+        </div>
+      </main>
+    </>
+  );
+}
+
 export function Terminal() {
   const wallet = useWallet();
   const app = useShadowTrade(wallet.wallet);
@@ -78,31 +156,30 @@ export function Terminal() {
   return (
     <div className="flex min-h-[100dvh] flex-col lg:h-[100dvh]">
       <TopNav wallet={wallet} app={app} />
+      {app.resumable && (
+        <div role="status" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 border-b border-accent/30 bg-accent-soft px-3 py-2 text-xs">
+          <span>
+            <span className="font-medium text-text">You have a stealth session in progress.</span>{" "}
+            <span className="text-muted">It&apos;s saved encrypted on this device. Sign to resume it.</span>
+          </span>
+          <button onClick={app.unlock} className="h-7 rounded-md bg-accent px-3 font-medium text-accent-text hover:bg-accent-hover">
+            Sign to resume
+          </button>
+        </div>
+      )}
       {market ? (
-        <>
-          <MarketBar
-            markets={list.map((m) => ({ info: m.info, stats: stats.get(m.info.key) ?? null }))}
-            selected={market.info}
-            stats={marketStats}
-            onSelect={select}
-            venue={venue}
-            onVenueChange={setVenue}
-          />
-          <main className="flex flex-1 flex-col gap-1 p-1 lg:grid lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_288px_320px] lg:grid-rows-[minmax(0,1fr)_272px]">
-            <div className="h-[420px] lg:col-start-1 lg:row-start-1 lg:h-auto lg:min-h-0">
-              <ChartPanel key={market.info.key} market={market} />
-            </div>
-            <div className="lg:col-start-3 lg:row-span-2 lg:row-start-1 lg:min-h-0">
-              <OrderPanel app={app} wallet={wallet} market={market} priceHint={marketStats?.mark ?? marketStats?.price ?? null} onSwitchVenue={setVenue} />
-            </div>
-            <div className="h-[460px] lg:col-start-2 lg:row-start-1 lg:h-auto lg:min-h-0">
-              <BookAndTrades key={market.info.key} market={market} />
-            </div>
-            <div className="h-[360px] lg:col-span-2 lg:col-start-1 lg:row-start-2 lg:h-auto lg:min-h-0">
-              <BottomPanel app={app} onSelectPerp={selectPerp} />
-            </div>
-          </main>
-        </>
+        <TerminalBody
+          app={app}
+          wallet={wallet}
+          market={market}
+          list={list}
+          stats={stats}
+          marketStats={marketStats}
+          venue={venue}
+          onVenueChange={setVenue}
+          onSelect={select}
+          onSelectPerp={selectPerp}
+        />
       ) : (
         <div className="grid flex-1 place-items-center">
           {app.marketsError ? (

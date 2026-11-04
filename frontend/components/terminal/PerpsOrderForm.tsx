@@ -4,7 +4,6 @@ import { useState } from "react";
 import { formatUnits, parseUnits } from "viem";
 import { usePoll } from "@/hooks/usePoll";
 import type { Step } from "@/lib/session";
-import { formatPrice, formatUsd } from "@/lib/format";
 import {
   getAccount,
   getMarkPrice,
@@ -38,20 +37,35 @@ function toSize(market: PerpMarket, lots: bigint) {
   return Number(lots) / 10 ** market.sizeDecimals;
 }
 
-function formatSize(size: number) {
-  return size.toLocaleString(undefined, { maximumFractionDigits: 5 });
+function formatSize(size: number, dp: number) {
+  return size.toLocaleString(undefined, { maximumFractionDigits: Math.min(dp, 8) });
 }
+
+function formatPx(value: number, dp: number) {
+  return `$${value.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
+}
+
+function formatUsd(value: number) {
+  return value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatFee(value: number) {
+  return value >= 0.01 ? formatUsd(value) : "<$0.01";
+}
+
+const MIN_NOTIONAL = 10;
 
 function hypothetical(side: Side, lots: bigint, mark: bigint, margin: bigint): Position {
   return { side, sizeLots: lots, entryPNS: mark, marginCNS: margin, pnlCNS: 0n, markPNS: mark };
 }
 
-function blockReason(o: { busy: boolean; hasAccount: boolean; collateral: bigint; free: bigint; lots: bigint; mark: bigint | null }) {
+function blockReason(o: { busy: boolean; hasAccount: boolean; collateral: bigint; free: bigint; lots: bigint; notional: number; mark: bigint | null }) {
   if (o.busy) return "Working…";
   if (!o.hasAccount || o.mark === null) return "Loading market…";
   if (o.collateral <= 0n) return "Enter an amount";
   if (o.collateral > o.free) return "Amount exceeds free balance";
   if (o.lots <= 0n) return "Size too small";
+  if (o.notional < MIN_NOTIONAL) return "Below minimum order";
   return null;
 }
 
@@ -65,7 +79,10 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 const chip =
-  "h-7 flex-1 rounded-md border border-border bg-surface-2 text-xs text-muted transition-colors hover:border-faint hover:text-text";
+  "h-6 flex-1 rounded-md border border-border bg-surface-2 text-xs text-muted transition-colors hover:border-faint hover:text-text";
+
+const leverageChip =
+  "h-6 rounded-md border border-border bg-surface-2 px-2 text-[11px] text-muted transition-colors hover:border-faint hover:text-text";
 
 export function PerpsOrderForm({
   session,
@@ -101,16 +118,19 @@ export function PerpsOrderForm({
   const fee = (notional * market.takerFeeBps) / 10_000;
   const liq = mark !== null && lots > 0n ? liquidationPrice(market, hypothetical(side, lots, mark, collateral)) : null;
 
-  const reason = blockReason({ busy, hasAccount: account !== null, collateral, free, lots, mark: polledMark });
+  const reason = blockReason({ busy, hasAccount: account !== null, collateral, free, lots, notional, mark: polledMark });
   const isLong = side === "long";
-  const label = `Open ${isLong ? "Long" : "Short"} ${formatSize(size)} ${market.symbol}`;
+  const over = account !== null && collateral > free;
+  const tooSmall = !over && lots > 0n && notional < MIN_NOTIONAL;
+  const showValues = !over && lots > 0n;
+  const label = `Open ${isLong ? "Long" : "Short"} ${formatSize(size, market.sizeDecimals)} ${market.symbol}`;
 
   const submit = () => {
     if (reason !== null) return;
     void run(async (onStep) => {
       onStep({ index: 1, total: 1, label: "Placing market order on Perpl" });
       await openPosition(session.burner.wallet, market, side, lots, lev);
-      return `Opened ${side} ${formatSize(toSize(market, lots))} ${market.symbol} at ${lev}x`;
+      return `Opened ${side} ${formatSize(toSize(market, lots), market.sizeDecimals)} ${market.symbol} at ${lev}x`;
     });
   };
 
@@ -120,7 +140,7 @@ export function PerpsOrderForm({
   const ticks = Array.from(new Set([1, mid, market.maxLeverage]));
 
   return (
-    <div className="space-y-3 px-3 py-3">
+    <div className="flex min-h-full flex-col gap-2 px-3 pb-0 pt-3">
       <div role="radiogroup" aria-label="Direction" className="grid grid-cols-2 gap-1 rounded-lg bg-surface-2 p-1">
         {(["long", "short"] as const).map((s) => {
           const active = s === side;
@@ -140,17 +160,15 @@ export function PerpsOrderForm({
         })}
       </div>
 
-      <div className="flex items-center gap-3 border-b border-border text-xs">
-        <span className="-mb-px border-b-2 border-accent pb-1.5 font-medium text-text">Market</span>
-      </div>
-
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted">Available</span>
         <span className="font-mono tabular">{account ? `${formatUsd(Number(free) / CNS)} AUSD` : "—"}</span>
       </div>
 
       <div>
-        <label className="flex h-10 items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 focus-within:border-accent">
+        <label
+          className={`flex h-9 items-center gap-2 rounded-lg border bg-surface-2 px-3 ${over ? "border-danger" : "border-border focus-within:border-accent"}`}
+        >
           <span className="shrink-0 text-xs text-faint">Collateral</span>
           <input
             inputMode="decimal"
@@ -158,10 +176,16 @@ export function PerpsOrderForm({
             onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
             placeholder="0.00"
             aria-label="Collateral in AUSD"
+            aria-invalid={over}
             className="min-w-0 flex-1 bg-transparent text-right font-mono text-[13px] tabular outline-none placeholder:text-faint"
           />
           <span className="shrink-0 text-xs text-muted">AUSD</span>
         </label>
+        {over && (
+          <p role="alert" className="mt-1 text-[11px] text-danger">
+            Exceeds available balance ({formatUsd(Number(free) / CNS).replace("$", "")} AUSD)
+          </p>
+        )}
         <div className="mt-1.5 flex gap-1.5">
           {PERCENTS.map((p) => (
             <button key={p} type="button" className={chip} onClick={() => fillPercent(p)} disabled={!account}>
@@ -172,11 +196,21 @@ export function PerpsOrderForm({
       </div>
 
       <div>
-        <div className="flex items-center justify-between text-xs">
+        <div className="flex items-center gap-2 text-xs">
           <label htmlFor="perp-leverage" className="text-muted">
             Leverage
           </label>
           <span className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-xs tabular text-text">{lev}x</span>
+          <div className="ml-auto flex gap-1">
+            {leverageChips.map((x) => (
+              <button key={x} type="button" className={leverageChip} onClick={() => setLeverage(x)}>
+                {x}x
+              </button>
+            ))}
+            <button type="button" className={leverageChip} onClick={() => setLeverage(market.maxLeverage)}>
+              Max
+            </button>
+          </div>
         </div>
         <input
           id="perp-leverage"
@@ -186,42 +220,35 @@ export function PerpsOrderForm({
           step={1}
           value={lev}
           onChange={(e) => setLeverage(Number(e.target.value))}
-          className="mt-2 w-full accent-[var(--color-accent)]"
+          className="mt-1.5 block h-4 w-full accent-[var(--color-accent)]"
         />
-        <div className="mt-0.5 flex justify-between font-mono text-[10px] text-faint" aria-hidden>
+        <div className="flex justify-between font-mono text-[10px] leading-none text-faint" aria-hidden>
           {ticks.map((t) => (
             <span key={t}>{t}x</span>
           ))}
         </div>
-        <div className="mt-1.5 flex gap-1.5">
-          {leverageChips.map((x) => (
-            <button key={x} type="button" className={chip} onClick={() => setLeverage(x)}>
-              {x}x
-            </button>
-          ))}
-          <button type="button" className={chip} onClick={() => setLeverage(market.maxLeverage)}>
-            Max
-          </button>
-        </div>
       </div>
 
-      <dl className="space-y-1.5 border-t border-border pt-3" aria-live="polite">
-        <Row label="Size" value={lots > 0n ? `${formatSize(size)} ${market.symbol}` : "—"} />
-        <Row label="Notional" value={lots > 0n ? formatUsd(notional) : "—"} />
-        <Row label="Est. entry (mark)" value={mark !== null ? `$${formatPrice(toPrice(market, mark))}` : "—"} />
-        <Row label="Est. liquidation" value={liq !== null && Number.isFinite(liq) && liq > 0 ? `$${formatPrice(liq)}` : "—"} />
-        <Row label={`Fee (taker ${market.takerFeeBps} bps)`} value={lots > 0n ? formatUsd(fee, 4) : "—"} />
+      <dl className="space-y-1 border-t border-border pt-2" aria-live="polite">
+        <Row label="Size" value={showValues ? `${formatSize(size, market.sizeDecimals)} ${market.symbol}` : "—"} />
+        <Row label="Notional" value={showValues ? formatUsd(notional) : "—"} />
+        <Row label="Est. entry (mark)" value={mark !== null ? formatPx(toPrice(market, mark), market.priceDecimals) : "—"} />
+        <Row label="Est. liquidation" value={showValues && liq !== null && Number.isFinite(liq) && liq > 0 ? formatPx(liq, market.priceDecimals) : "—"} />
+        <Row label={`Fee (taker ${market.takerFeeBps} bps)`} value={showValues ? formatFee(fee) : "—"} />
         <Row label="Max slippage" value="1%" />
       </dl>
 
-      <button
-        type="button"
-        disabled={reason !== null}
-        onClick={submit}
-        className={`h-11 w-full rounded-lg text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${isLong ? "bg-success" : "bg-danger"}`}
-      >
-        {reason ?? label}
-      </button>
+      <div className="sticky bottom-0 z-10 mt-auto -mx-3 border-t border-border bg-surface px-3 pb-2 pt-2">
+        {tooSmall && <p className="mb-1.5 text-[11px] text-warning">Minimum order is about $10 notional</p>}
+        <button
+          type="button"
+          disabled={reason !== null}
+          onClick={submit}
+          className={`h-10 w-full rounded-lg text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${isLong ? "bg-success" : "bg-danger"}`}
+        >
+          {reason ?? label}
+        </button>
+      </div>
     </div>
   );
 }

@@ -2,10 +2,19 @@ import { erc20Abi, type Address, type WalletClient } from "viem";
 import { kuruAccountCoreAbi, kuruOrderBookAbi } from "./abi/kuru";
 import { chainTime, publicClient, write } from "./chain";
 import { KURU, TOKENS, type SpotMarket } from "./config";
+import { KURU_PRECISION } from "./kuruData";
 
 const SWAP_DEADLINE_SEC = 120n;
 
 export type Quote = { amountIn: bigint; amountOut: bigint };
+
+/** Kuru fills base-token sizes in whole lots; anything finer is dust the book rejects as a partial fill. */
+export function floorToLot(market: SpotMarket, amount: bigint): bigint {
+  const size = KURU_PRECISION[market.symbol]?.size;
+  if (!size) return amount;
+  const lot = 10n ** BigInt(market.baseDecimals) / BigInt(size);
+  return lot > 1n ? amount - (amount % lot) : amount;
+}
 
 export async function accountId(owner: Address): Promise<number> {
   return publicClient.readContract({ address: KURU.accountCore, abi: kuruAccountCoreAbi, functionName: "rootAccountIdOf", args: [owner] });
@@ -40,18 +49,28 @@ export async function bestBidAsk(market: SpotMarket): Promise<{ bid: number | nu
 function topOfBookOut(market: SpotMarket, isBuy: boolean, amountIn: bigint, book: TopOfBook): bigint | null {
   const price = isBuy ? book.ask : book.bid;
   if (price === null) return null;
-  const decimalShift = 10n ** BigInt(Math.abs(market.baseDecimals - TOKENS.kuru.decimals));
   const p = BigInt(price);
   const precision = BigInt(book.precision);
-  // base has more decimals than USDC on every listed market.
-  return isBuy ? (amountIn * precision * decimalShift) / p : (amountIn * p) / (precision * decimalShift);
+  // price = p / precision quote per whole base; scale between 10^baseDecimals and 10^quoteDecimals atoms.
+  const base = 10n ** BigInt(market.baseDecimals);
+  const quote = 10n ** BigInt(TOKENS.kuru.decimals);
+  return isBuy ? (amountIn * precision * base) / (p * quote) : (amountIn * p * quote) / (precision * base);
+}
+
+/** Largest unspent quote a buy may leave: the book fills whole lots, so up to ~2 lots' worth plus 0.1% is dust. */
+function buyDustAllowance(market: SpotMarket, amountIn: bigint, book: TopOfBook): bigint {
+  const lot = 10n ** BigInt(market.baseDecimals) / BigInt(KURU_PRECISION[market.symbol]?.size ?? 10 ** market.baseDecimals);
+  const lotQuote = book.ask === null ? 0n : (lot * BigInt(book.ask) * 10n ** BigInt(TOKENS.kuru.decimals)) / (BigInt(book.precision) * 10n ** BigInt(market.baseDecimals));
+  return amountIn / 1000n + 2n * lotQuote + 1n;
 }
 
 async function assertFairFill(market: SpotMarket, isBuy: boolean, amountIn: bigint, q: Quote) {
   const side = isBuy ? "sellers" : "buyers";
   if (q.amountOut === 0n) throw new Error(`No ${side} on the ${market.symbol} book right now. Try again shortly.`);
-  if (q.amountIn < amountIn) throw new Error(`Not enough ${side} on the ${market.symbol} book to fill this in full. Try a smaller amount.`);
-  const ideal = topOfBookOut(market, isBuy, amountIn, await topOfBook(market));
+  const book = await topOfBook(market);
+  const dust = isBuy ? buyDustAllowance(market, amountIn, book) : 0n;
+  if (q.amountIn + dust < amountIn) throw new Error(`Not enough ${side} on the ${market.symbol} book to fill this in full. Try a smaller amount.`);
+  const ideal = topOfBookOut(market, isBuy, q.amountIn, book);
   if (ideal !== null && q.amountOut * 10_000n < ideal * (10_000n - MAX_PRICE_IMPACT_BPS)) {
     throw new Error(`This trade would move the ${market.symbol} price more than 2%. Try a smaller amount.`);
   }
@@ -59,6 +78,7 @@ async function assertFairFill(market: SpotMarket, isBuy: boolean, amountIn: bigi
 
 /** isBuy: spend quote (USDC) for base. Otherwise spend base for quote. */
 export async function quote(market: SpotMarket, isBuy: boolean, amountIn: bigint): Promise<Quote> {
+  if (amountIn === 0n) return { amountIn: 0n, amountOut: 0n };
   const { amountInUsed, amountOut } = await publicClient.readContract({
     address: market.orderBook,
     abi: kuruOrderBookAbi,

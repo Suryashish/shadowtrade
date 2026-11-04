@@ -32,6 +32,10 @@ export const KURU = {
 
 export type Venue = "perpl" | "kuru";
 
+// Kuru spot is off until we have testnet USDC for it. Set NEXT_PUBLIC_ENABLE_KURU=true to bring it back.
+export const KURU_ENABLED = process.env.NEXT_PUBLIC_ENABLE_KURU === "true";
+export const VENUES: Venue[] = KURU_ENABLED ? ["perpl", "kuru"] : ["perpl"];
+
 export type StableToken = { address: Address; symbol: string; decimals: number; venue: Venue };
 
 export const TOKENS: Record<Venue, StableToken> = {

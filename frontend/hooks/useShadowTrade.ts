@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePoll } from "./usePoll";
-import { BaseError, erc20Abi, parseUnits, type Address, type LocalAccount, type WalletClient } from "viem";
+import { BaseError, erc20Abi, parseUnits, type Address, type Hex, type LocalAccount, type WalletClient } from "viem";
 import { publicClient } from "@/lib/chain";
 import { TOKENS, type Venue } from "@/lib/config";
-import { shadowAccountFromSignature, shadowKeyMessage } from "@/lib/keys";
+import { createBurner, shadowAccountFromSignature, shadowKeyMessage, vaultSecretFromSignature } from "@/lib/keys";
 import { fetchPerpMarkets, type PerpMarket } from "@/lib/perpl";
 import { depositToPool, poolLiquidity, privateBalance, signWithdraw } from "@/lib/pool";
 import { relay } from "@/lib/relay";
 import { enterStealth, exitStealth, type StealthSession, type Step } from "@/lib/session";
+import { clearSession, hasSessionToResume, loadSession, markSessionActive, saveSession } from "@/lib/vault";
 
 export type Balances = Record<Venue, { wallet: bigint; private: bigint; pool: bigint }>;
 
@@ -69,7 +70,7 @@ async function loadBalances(owner: Address, shadow: Address): Promise<Balances> 
 
 export function useShadowTrade(wallet: WalletClient | null) {
   // Bound to the wallet that derived it, so switching wallets can never reuse another wallet's key.
-  const [unlocked, setUnlocked] = useState<{ owner: Address; account: LocalAccount } | null>(null);
+  const [unlocked, setUnlocked] = useState<{ owner: Address; account: LocalAccount; vaultSecret: Hex } | null>(null);
   const [session, setSession] = useState<StealthSession | null>(null);
   const [markets, setMarkets] = useState<PerpMarket[]>([]);
   const [marketsError, setMarketsError] = useState<string | null>(null);
@@ -96,14 +97,6 @@ export function useShadowTrade(wallet: WalletClient | null) {
   const balancesLoaded = balancePoll.data !== null;
   const refresh = balancePoll.refresh;
 
-  // The burner key exists only in memory, so leaving mid-session would strand its funds.
-  useEffect(() => {
-    if (!session) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [session]);
-
   const clearActivity = useCallback(() => setActivity({ kind: "idle" }), []);
 
   const run = useCallback(
@@ -128,8 +121,17 @@ export function useShadowTrade(wallet: WalletClient | null) {
     if (!wallet?.account) return;
     try {
       const signature = await wallet.signMessage({ account: wallet.account, message: shadowKeyMessage(wallet.account.address) });
-      setUnlocked({ owner: wallet.account.address, account: shadowAccountFromSignature(signature) });
-      setActivity({ kind: "idle" });
+      const account = shadowAccountFromSignature(signature);
+      const vaultSecret = vaultSecretFromSignature(signature);
+      setUnlocked({ owner: wallet.account.address, account, vaultSecret });
+      const saved = await loadSession(account.address, vaultSecret).catch(() => null);
+      if (!saved) markSessionActive(wallet.account.address, false);
+      if (saved) {
+        setSession({ burner: createBurner(saved.burnerKey), venue: saved.venue, bucket: saved.bucket, startedAt: saved.startedAt });
+        setActivity({ kind: "done", message: "Welcome back. Your stealth session was restored from this device." });
+      } else {
+        setActivity({ kind: "idle" });
+      }
     } catch (e) {
       setActivity({ kind: "error", message: friendlyError(e) });
     }
@@ -166,12 +168,23 @@ export function useShadowTrade(wallet: WalletClient | null) {
   const enter = useCallback(
     (venue: Venue, bucket: number) =>
       run(async (onStep) => {
-        if (!shadow) throw new Error("Unlock your private balance first.");
-        const s = await enterStealth({ shadow, venue, bucket, onStep });
-        setSession(s);
+        if (!shadow || !unlocked) throw new Error("Unlock your private balance first.");
+        await enterStealth({
+          shadow,
+          venue,
+          bucket,
+          onStep,
+          // Back up and expose the session before funds move, so a refresh or a failed step
+          // can always be recovered with Exit.
+          onSession: async (s) => {
+            await saveSession(shadow.address, unlocked.vaultSecret, { burnerKey: s.burner.privateKey, venue, bucket, startedAt: s.startedAt });
+            markSessionActive(unlocked.owner, true);
+            setSession(s);
+          },
+        });
         return "Stealth Mode is on. You're trading from a fresh wallet.";
       }),
-    [run, shadow],
+    [run, shadow, unlocked],
   );
 
   const exit = useCallback(
@@ -180,14 +193,18 @@ export function useShadowTrade(wallet: WalletClient | null) {
         if (!shadow || !session) throw new Error("No active stealth session.");
         const t = TOKENS[session.venue];
         const returned = await exitStealth({ session, shadow: shadow.address, perpMarkets: markets, onStep });
+        clearSession(shadow.address);
+        if (address) markSessionActive(address, false);
         setSession(null);
         return `Stealth session closed. ${(Number(returned) / 10 ** t.decimals).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${t.symbol} is back in your private balance and the burner key is wiped.`;
       }),
-    [run, shadow, session, markets],
+    [run, shadow, session, markets, address],
   );
 
   return {
     shadow,
+    /** A session was left running on this device for the connected wallet; signing resumes it. */
+    resumable: !!address && !shadow && hasSessionToResume(address),
     unlock,
     balances,
     balancesLoaded,

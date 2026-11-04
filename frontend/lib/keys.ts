@@ -1,11 +1,4 @@
-import {
-  createWalletClient,
-  http,
-  keccak256,
-  type Address,
-  type LocalAccount,
-  type WalletClient,
-} from "viem";
+import { concat, createWalletClient, http, keccak256, toHex, type Address, type Hex, type LocalAccount, type WalletClient } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { monadTestnet, RPC_URL } from "./config";
 
@@ -18,15 +11,20 @@ export function shadowKeyMessage(main: Address) {
 }
 
 /** Deterministic key from a wallet signature (RFC 6979), so the same wallet always recovers it. */
-export function shadowAccountFromSignature(signature: `0x${string}`): LocalAccount {
+export function shadowAccountFromSignature(signature: Hex): LocalAccount {
   return privateKeyToAccount(keccak256(signature));
 }
 
-export type Burner = { address: Address; wallet: WalletClient };
+/** Separate secret for encrypting session backups; never equal to the shadow signing key. */
+export function vaultSecretFromSignature(signature: Hex): Hex {
+  return keccak256(concat([signature, toHex("shadowtrade:session-vault:v1")]));
+}
 
-/** A fresh throwaway account. The key lives only in this closure and is never stored or logged. */
-export function createBurner(): Burner {
-  const account = privateKeyToAccount(generatePrivateKey());
+export type Burner = { address: Address; wallet: WalletClient; privateKey: Hex };
+
+/** A fresh throwaway account. Its key is only persisted encrypted (see vault.ts) and never logged. */
+export function createBurner(privateKey: Hex = generatePrivateKey()): Burner {
+  const account = privateKeyToAccount(privateKey);
   const wallet = createWalletClient({ account, chain: monadTestnet, transport: http(RPC_URL) });
-  return { address: account.address, wallet };
+  return { address: account.address, wallet, privateKey };
 }

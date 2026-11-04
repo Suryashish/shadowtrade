@@ -1,7 +1,6 @@
 "use client";
 
 import { usePoll } from "@/hooks/usePoll";
-import { formatPrice, formatUsd } from "@/lib/format";
 import { closePosition, getAccount, getPosition, liquidationPrice, type PerpMarket, type Position } from "@/lib/perpl";
 import type { StealthSession, Step } from "@/lib/session";
 
@@ -13,7 +12,9 @@ type Open = { market: PerpMarket; position: Position };
 
 const toPrice = (m: PerpMarket, pns: bigint) => Number(pns) / 10 ** m.priceDecimals;
 const toSize = (m: PerpMarket, lots: bigint) => Number(lots) / 10 ** m.sizeDecimals;
-const fmtSize = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 5 });
+const fmtSize = (n: number, dp: number) => n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: Math.min(dp, 8) });
+const fmtPrice = (n: number, dp: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
+const formatUsd = (n: number) => n.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const money = (cns: bigint) => Number(cns) / CNS;
 
 function signed(value: number) {
@@ -30,10 +31,12 @@ function derive(item: Open) {
   const roe = margin > 0 ? (pnl / margin) * 100 : 0;
   return {
     size,
+    sizeText: fmtSize(size, market.sizeDecimals),
+    markText: fmtPrice(mark, market.priceDecimals),
+    entryText: fmtPrice(toPrice(market, p.entryPNS), market.priceDecimals),
     mark,
     notional: size * mark,
-    entry: toPrice(market, p.entryPNS),
-    liq: Number.isFinite(liq) && liq > 0 ? `$${formatPrice(liq)}` : "—",
+    liq: Number.isFinite(liq) && liq > 0 ? fmtPrice(liq, market.priceDecimals) : "—",
     margin,
     pnl,
     pnlText: `${signed(pnl)} (${roe >= 0 ? "+" : ""}${roe.toFixed(2)}%)`,
@@ -95,15 +98,20 @@ export function PositionsTable({
     });
 
   const headers = ["Market", "Size", "Notional", "Entry", "Mark", "Liq. price", "Margin", "PnL (ROE%)", ""];
+  const hideBelowXl = (i: number) => (i === 2 || i === 6 ? "hidden xl:table-cell" : "");
 
   return (
     <>
       <div className="hidden overflow-x-auto md:block">
-        <table className="w-full min-w-[820px] border-collapse text-xs">
+        <table className="w-full min-w-[640px] border-collapse text-xs">
           <thead>
             <tr className="text-left text-[11px] text-faint">
               {headers.map((h, i) => (
-                <th key={i} scope="col" className={`h-8 px-3 font-normal ${i > 0 ? "text-right" : ""}`}>
+                <th
+                  key={i}
+                  scope="col"
+                  className={`h-8 px-3 font-normal ${i > 0 ? "text-right" : ""} ${hideBelowXl(i)} ${i === 8 ? "sticky right-0 border-l border-border bg-surface" : ""}`}
+                >
                   {h}
                 </th>
               ))}
@@ -113,7 +121,7 @@ export function PositionsTable({
             {data.map((item) => {
               const d = derive(item);
               return (
-                <tr key={item.market.id} className="h-10 border-b border-border hover:bg-surface-2">
+                <tr key={item.market.id} className="group h-10 border-b border-border hover:bg-surface-2">
                   <td className="px-3">
                     <button
                       type="button"
@@ -124,14 +132,14 @@ export function PositionsTable({
                       <span className={`text-[11px] ${d.sideTone}`}>{d.sideLabel}</span>
                     </button>
                   </td>
-                  <td className={`px-3 text-right font-mono tabular ${d.sideTone}`}>{fmtSize(d.size)}</td>
-                  <td className="px-3 text-right font-mono tabular">{formatUsd(d.notional)}</td>
-                  <td className="px-3 text-right font-mono tabular">${formatPrice(d.entry)}</td>
-                  <td className="px-3 text-right font-mono tabular">${formatPrice(d.mark)}</td>
+                  <td className={`px-3 text-right font-mono tabular ${d.sideTone}`}>{d.sizeText}</td>
+                  <td className="hidden px-3 text-right font-mono tabular xl:table-cell">{formatUsd(d.notional)}</td>
+                  <td className="px-3 text-right font-mono tabular">{d.entryText}</td>
+                  <td className="px-3 text-right font-mono tabular">{d.markText}</td>
                   <td className="px-3 text-right font-mono tabular">{d.liq}</td>
-                  <td className="px-3 text-right font-mono tabular">{formatUsd(d.margin)}</td>
+                  <td className="hidden px-3 text-right font-mono tabular xl:table-cell">{formatUsd(d.margin)}</td>
                   <td className={`px-3 text-right font-mono tabular ${d.tone}`}>{d.pnlText}</td>
-                  <td className="px-3 text-right">
+                  <td className="sticky right-0 border-l border-border bg-surface px-3 text-right group-hover:bg-surface-2">
                     <button type="button" className={closeBtn} disabled={busy} onClick={() => close(item)} aria-label={`Market close ${item.market.symbol} position`}>
                       Market close
                     </button>
@@ -157,11 +165,11 @@ export function PositionsTable({
               </div>
               <dl className="mt-2 grid grid-cols-3 gap-x-3 gap-y-1.5 text-xs">
                 {[
-                  ["Size", fmtSize(d.size)],
+                  ["Size", d.sizeText],
                   ["Notional", formatUsd(d.notional)],
                   ["Margin", formatUsd(d.margin)],
-                  ["Entry", `$${formatPrice(d.entry)}`],
-                  ["Mark", `$${formatPrice(d.mark)}`],
+                  ["Entry", d.entryText],
+                  ["Mark", d.markText],
                   ["Liq.", d.liq],
                 ].map(([k, v]) => (
                   <div key={k}>

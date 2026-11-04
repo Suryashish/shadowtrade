@@ -540,5 +540,48 @@ export const perplExchangeAbi = [
         "type": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ExceedsLastExecutionBlock",
+    "inputs": [
+      { "name": "arg0", "type": "uint256" }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PriceOutOfRange",
+    "inputs": [
+      { "name": "arg0", "type": "uint256" },
+      { "name": "arg1", "type": "uint256" },
+      { "name": "arg2", "type": "uint256" }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AmountExceedsAvailableBalance",
+    "inputs": [
+      { "name": "arg0", "type": "uint256" },
+      { "name": "arg1", "type": "uint256" },
+      { "name": "arg2", "type": "uint256" }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CloseOrderExceedsPosition",
+    "inputs": [
+      { "name": "arg0", "type": "uint256" },
+      { "name": "arg1", "type": "uint256" }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MarkPriceAgeExceedsMax",
+    "inputs": [
+      { "name": "arg0", "type": "uint256" },
+      { "name": "arg1", "type": "uint256" },
+      { "name": "arg2", "type": "uint256" },
+      { "name": "arg3", "type": "uint256" }
+    ]
   }
 ] as const;

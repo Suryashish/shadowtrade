@@ -14,7 +14,7 @@ Both venues' collateral tokens are admin-mint only on testnet. There is no publi
 | # | What | Why | How to get it |
 |---|---|---|---|
 | 1 | **Testnet aUSD** (`0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC`), ~2,000+ | Perpl perps collateral. Opening an account needs ≥100 aUSD. | Ask Perpl (Discord / Telegram) to send aUSD to your wallet, or check https://testnet.perpl.xyz for a faucet. |
-| 2 | **Kuru test USDC** (`0xb01DC575a7ef75e58A05D2bde73ab79f8e7dd0Be`), ~1,000+ | Kuru spot trading | Ask the Kuru team. The mint owner is `0xfeb3BF5CE7A6b0A59bcc6cb8308661b45aCa002c`. |
+| 2 | *(not needed while Kuru is disabled, `NEXT_PUBLIC_ENABLE_KURU=false`)* **Kuru test USDC** (`0xb01DC575a7ef75e58A05D2bde73ab79f8e7dd0Be`), ~1,000+ | Kuru spot trading | Ask the Kuru team. The mint owner is `0xfeb3BF5CE7A6b0A59bcc6cb8308661b45aCa002c`. |
 
 Send them to your own MetaMask address. The app deposits them into the private pool for you.
 

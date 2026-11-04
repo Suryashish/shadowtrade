@@ -5,7 +5,10 @@ import { usePoll } from "@/hooks/usePoll";
 import { SPOT_MARKETS, TOKENS } from "@/lib/config";
 import { formatToken, formatUsd } from "@/lib/format";
 import * as kuru from "@/lib/kuru";
-import type { StealthSession } from "@/lib/session";
+import type { StealthSession, Step } from "@/lib/session";
+import type { SpotMarket } from "@/lib/config";
+
+type Run = (job: (onStep: (s: Step) => void) => Promise<string>) => Promise<void>;
 
 const USDC = TOKENS.kuru;
 
@@ -15,7 +18,7 @@ function Empty({ children }: { children: string }) {
   return <p className="px-3 py-8 text-center text-xs text-muted">{children}</p>;
 }
 
-export function SpotHoldings({ session }: { session: StealthSession | null }) {
+export function SpotHoldings({ session, run, busy = false }: { session: StealthSession | null; run?: Run; busy?: boolean }) {
   const owner = session?.burner.address ?? null;
   const { data } = usePoll<Holdings>(
     owner
@@ -39,7 +42,17 @@ export function SpotHoldings({ session }: { session: StealthSession | null }) {
     );
   }
 
-  const rows = [
+  const sell = (market: SpotMarket, held: bigint) => {
+    if (!run) return;
+    const amount = kuru.floorToLot(market, held);
+    void run(async (onStep) => {
+      onStep({ index: 1, total: 1, label: "Selling on Kuru" });
+      const q = await kuru.swap(session.burner.wallet, market, false, amount);
+      return `Sold ${formatToken(q.amountIn, market.baseDecimals, 6)} ${market.base} for ${formatToken(q.amountOut, USDC.decimals, 2)} USDC`;
+    });
+  };
+
+  const rows: { asset: string; balance: string; value: string; sell?: () => void }[] = [
     { asset: USDC.symbol, balance: formatToken(data.usdc, USDC.decimals, 2), value: formatUsd(Number(formatUnits(data.usdc, USDC.decimals))) },
     ...SPOT_MARKETS.flatMap((m, i) => {
       const held = data.bases[i];
@@ -50,6 +63,7 @@ export function SpotHoldings({ session }: { session: StealthSession | null }) {
           asset: m.base,
           balance: formatToken(held, m.baseDecimals, 6),
           value: bid !== null ? formatUsd(Number(formatUnits(held, m.baseDecimals)) * bid) : "—",
+          sell: () => sell(m, held),
         },
       ];
     }),
@@ -69,6 +83,7 @@ export function SpotHoldings({ session }: { session: StealthSession | null }) {
             <th scope="col" className="h-8 px-3 text-right font-normal">
               Est. value
             </th>
+            <th scope="col" className="h-8 w-20 px-3" aria-label="Actions" />
           </tr>
         </thead>
         <tbody>
@@ -77,6 +92,19 @@ export function SpotHoldings({ session }: { session: StealthSession | null }) {
               <td className="px-3 font-medium">{r.asset}</td>
               <td className="px-3 text-right font-mono tabular">{r.balance}</td>
               <td className="px-3 text-right font-mono tabular">{r.value}</td>
+              <td className="px-3 text-right">
+                {r.sell && run && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={r.sell}
+                    aria-label={`Sell ${r.asset} for USDC`}
+                    className="h-7 rounded-md border border-border px-2.5 text-xs text-text transition-colors hover:border-faint hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Sell
+                  </button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

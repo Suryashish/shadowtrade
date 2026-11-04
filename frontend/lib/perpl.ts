@@ -164,6 +164,25 @@ export function lotsFor(market: PerpMarket, collateralCNS: bigint, leverage: num
   return (notionalCNS * scale) / (markPNS * 1_000_000n);
 }
 
+/** Signed size of the account's net position in a market (long positive, 0 when flat). */
+async function lotsHeld(perpId: number, owner: Address): Promise<bigint> {
+  const account = await getAccount(owner);
+  const p = account ? await getPosition(perpId, account.id) : null;
+  return p ? (p.side === "long" ? p.sizeLots : -p.sizeLots) : 0n;
+}
+
+/** Max leverage the exchange allows for a position of this size; it shrinks as size nears the open-interest cap. */
+export async function getMaxLeverage(perpId: number, lots: bigint): Promise<number> {
+  const f = await publicClient.readContract({
+    address: PERPL.exchange,
+    abi: perplExchangeAbi,
+    functionName: "getMarginFractions",
+    args: [BigInt(perpId), lots],
+  });
+  return Number(f[2]) / 100;
+}
+
+/** Fills at most `lots` and returns how many lots actually filled (opposite-side orders net against the market's existing position); throws when nothing did (an unfilled IOC order doesn't revert). */
 export async function openPosition(
   wallet: WalletClient,
   market: PerpMarket,
@@ -171,19 +190,28 @@ export async function openPosition(
   lots: bigint,
   leverage: number,
   slippageBps = 100,
-) {
+): Promise<bigint> {
   if (lots <= 0n) throw new Error("Position size is too small for this market.");
+  const owner = wallet.account!.address;
+  const before = await lotsHeld(market.id, owner);
   const mark = await getMarkPrice(market.id);
   await execMarketOrder(wallet, {
     perpId: market.id,
     type: side === "long" ? ORDER.openLong : ORDER.openShort,
     lots,
     limitPNS: slip(mark, slippageBps, side === "long"),
-    leverage,
+    // Above-max or zero leverage is silently clamped by the exchange; clamp here so it's explicit.
+    leverage: Math.min(Math.max(leverage, 1), market.maxLeverage),
   });
+  const delta = (await lotsHeld(market.id, owner)) - before;
+  const filled = side === "long" ? delta : -delta;
+  if (filled <= 0n) throw new Error("The order didn't fill within your price limit. Try again or use a smaller size.");
+  return filled;
 }
 
 export async function closePosition(wallet: WalletClient, market: PerpMarket, position: Position, slippageBps = 100) {
+  const owner = wallet.account!.address;
+  const before = await lotsHeld(market.id, owner);
   const mark = await getMarkPrice(market.id);
   const isLong = position.side === "long";
   await execMarketOrder(wallet, {
@@ -193,6 +221,7 @@ export async function closePosition(wallet: WalletClient, market: PerpMarket, po
     limitPNS: slip(mark, slippageBps, !isLong),
     leverage: 1,
   });
+  if ((await lotsHeld(market.id, owner)) === before) throw new Error("The close order didn't fill within your price limit. Try again.");
 }
 
 export async function withdrawAll(wallet: WalletClient): Promise<bigint> {
@@ -208,5 +237,6 @@ export function liquidationPrice(market: PerpMarket, p: Position): number {
   const entry = Number(p.entryPNS) / 10 ** market.priceDecimals;
   const margin = Number(p.marginCNS) / 1e6;
   const mm = 1 / market.maintenanceLeverage;
-  return p.side === "long" ? (size * entry - margin) / (size * (1 - mm)) : (size * entry + margin) / (size * (1 + mm));
+  const liq = p.side === "long" ? (size * entry - margin) / (size * (1 - mm)) : (size * entry + margin) / (size * (1 + mm));
+  return Math.max(liq, 0);
 }

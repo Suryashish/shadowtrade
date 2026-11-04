@@ -34,13 +34,17 @@ export async function enterStealth(opts: {
   bucket: number;
   onStep?: OnStep;
   relayBase?: string;
+  /** Called with the session before any funds move, so it can be backed up and exited if a later step fails. */
+  onSession?: (session: StealthSession) => Promise<void>;
 }): Promise<StealthSession> {
   const token = TOKENS[opts.venue];
   const amount = parseUnits(String(opts.bucket), token.decimals);
   const step = stepper(4, opts.onStep);
 
   step("Creating a fresh burner wallet");
-  const burner = createBurner();
+  const session: StealthSession = { burner: createBurner(), venue: opts.venue, bucket: opts.bucket, startedAt: Date.now() };
+  await opts.onSession?.(session);
+  const { burner } = session;
 
   step("Sending gas from the shared relayer");
   const gas = await relay({ kind: "gas", to: burner.address }, opts.relayBase);
@@ -55,7 +59,7 @@ export async function enterStealth(opts: {
   if (opts.venue === "perpl") await perpl.fundAccount(burner.wallet, amount);
   else await kuru.deposit(burner.wallet, token.address, amount);
 
-  return { burner, venue: opts.venue, bucket: opts.bucket, startedAt: Date.now() };
+  return session;
 }
 
 async function unwindPerpl(session: StealthSession, markets: perpl.PerpMarket[]) {
@@ -72,8 +76,8 @@ async function unwindKuru(session: StealthSession) {
   const { wallet, address } = session.burner;
   const id = await kuru.accountId(address);
   for (const market of SPOT_MARKETS) {
-    const base = await kuru.balanceOf(id, market.baseToken);
-    if (base > 0n) await kuru.swap(wallet, market, false, base);
+    const sellable = kuru.floorToLot(market, await kuru.balanceOf(id, market.baseToken));
+    if (sellable > 0n) await kuru.swap(wallet, market, false, sellable);
   }
   await kuru.withdrawAll(wallet, [TOKENS.kuru.address]);
 }
@@ -98,7 +102,8 @@ export async function exitStealth(opts: {
   if (amount > 0n) await depositToPool(session.burner.wallet, token.address, amount, opts.shadow);
 
   step("Returning leftover gas and wiping the burner key");
-  await sweepGas(session.burner);
+  // Funds are already safe in the pool; a failed dust sweep must not turn the exit into an error.
+  await sweepGas(session.burner).catch(() => undefined);
   return amount;
 }
 

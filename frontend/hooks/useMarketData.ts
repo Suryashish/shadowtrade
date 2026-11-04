@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { SPOT_MARKETS, type SpotMarket } from "@/lib/config";
+import { KURU_ENABLED, SPOT_MARKETS, type SpotMarket } from "@/lib/config";
 import { fetchKuruBook, fetchKuruCandles, fetchKuruStats, fetchKuruTrades, KURU_PRECISION } from "@/lib/kuruData";
 import type { Candle, MarketInfo, MarketStats, OrderBook, Resolution, Trade } from "@/lib/market";
 import type { PerpMarket } from "@/lib/perpl";
@@ -70,7 +70,7 @@ function perpStats(m: PerpMarket, t: TickerState | undefined): MarketStats | nul
 /** Every market on both venues with live 24h stats. */
 export function useMarketStats(perps: PerpMarket[]) {
   const ticker = usePoll(perps.length ? fetchPerplTicker : null, 5000, "perpl");
-  const spot = usePoll(() => Promise.all(SPOT_MARKETS.map((m) => fetchKuruStats(m).catch(() => null))), 10_000, "kuru");
+  const spot = usePoll(KURU_ENABLED ? () => Promise.all(SPOT_MARKETS.map((m) => fetchKuruStats(m).catch(() => null))) : null, 10_000, "kuru");
   const stats = new Map<string, MarketStats | null>();
   for (const m of perps) stats.set(perpInfo(m).key, perpStats(m, ticker.data?.[String(m.id)]));
   SPOT_TERMINAL_MARKETS.forEach((m, i) => stats.set(m.info.key, spot.data?.[i] ?? null));

@@ -1,13 +1,18 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { MarketInfo, Trade } from "@/lib/market";
 
 function fmt(value: number, decimals: number) {
   return value.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
-function fmtTime(seconds: number) {
-  return new Date(seconds * 1000).toLocaleTimeString(undefined, {
+function fmtTime(seconds: number, now: number) {
+  const d = new Date(seconds * 1000);
+  const age = Math.max(0, now - d.getTime());
+  if (age >= 24 * 3600 * 1000) return `${Math.floor(age / (24 * 3600 * 1000))}d ago`;
+  if (age >= 3600 * 1000) return `${Math.floor(age / (3600 * 1000))}h ago`;
+  return d.toLocaleTimeString(undefined, {
     hour12: false,
     hour: "2-digit",
     minute: "2-digit",
@@ -16,6 +21,11 @@ function fmtTime(seconds: number) {
 }
 
 export function RecentTrades({ trades, market }: { trades: Trade[] | null; market: MarketInfo }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
   return (
     <div className="flex h-full flex-col">
       <div className="grid h-9 shrink-0 grid-cols-3 items-center border-b border-border px-3 text-[11px] text-faint">
@@ -34,7 +44,7 @@ export function RecentTrades({ trades, market }: { trades: Trade[] | null; marke
       ) : trades.length === 0 ? (
         <div className="flex flex-1 items-center justify-center text-xs text-faint">No recent trades</div>
       ) : (
-        <div className="scroll-thin flex-1 overflow-y-auto" role="list" aria-label="Recent trades">
+        <div className="scroll-thin min-h-0 flex-1 overflow-y-auto pb-2" role="list" aria-label="Recent trades">
           {trades.slice(0, 50).map((t, i) => (
             <div
               key={t.id}
@@ -47,7 +57,7 @@ export function RecentTrades({ trades, market }: { trades: Trade[] | null; marke
                 {fmt(t.price, market.priceDecimals)}
               </span>
               <span className="text-right text-text">{fmt(t.size, market.sizeDecimals)}</span>
-              <span className="text-right text-faint">{fmtTime(t.time)}</span>
+              <span className="text-right text-faint" title={new Date(t.time * 1000).toLocaleString()}>{fmtTime(t.time, now)}</span>
             </div>
           ))}
         </div>

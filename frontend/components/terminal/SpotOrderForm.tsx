@@ -16,7 +16,9 @@ const QUOTE_DEBOUNCE_MS = 300;
 const PERCENTS = [25, 50, 75, 100] as const;
 
 type Side = "buy" | "sell";
-type QuoteState = { key: string; out: bigint } | { key: string; error: true };
+type QuoteState = { key: string; out: bigint; used: bigint } | { key: string; error: true };
+const MAX_IMPACT_PCT = 2;
+const QUOTE_TIMEOUT_MS = 8000;
 
 function parseAmount(value: string, decimals: number): bigint | null {
   if (!value || Number(value) <= 0) return null;
@@ -31,6 +33,7 @@ function parseAmount(value: string, decimals: number): bigint | null {
 function snapToBalance(amount: bigint, value: string, balance: bigint, decimals: number) {
   return amount > balance && Number(value) === Number(formatUnits(balance, decimals)) ? balance : amount;
 }
+
 
 function toNumber(value: bigint, decimals: number) {
   return Number(formatUnits(value, decimals));
@@ -52,26 +55,51 @@ function useQuote(market: SpotMarket, isBuy: boolean, amountIn: bigint | null) {
   useEffect(() => {
     if (!debouncedKey || debouncedKey !== key || amountIn === null) return;
     let cancelled = false;
+    const fail = () => !cancelled && setState({ key: debouncedKey, error: true });
+    const timer = setTimeout(fail, QUOTE_TIMEOUT_MS);
     kuru
       .quote(market, isBuy, amountIn)
-      .then((q) => !cancelled && setState({ key: debouncedKey, out: q.amountOut }))
-      .catch(() => !cancelled && setState({ key: debouncedKey, error: true }));
+      .then((q) => !cancelled && setState({ key: debouncedKey, out: q.amountOut, used: q.amountIn }))
+      .catch(fail)
+      .finally(() => clearTimeout(timer));
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [debouncedKey, key, market, isBuy, amountIn]);
   const current = state && state.key === key && key !== "" ? state : null;
-  return { loading: key !== "" && current === null, out: current && "out" in current ? current.out : null, failed: current !== null && "error" in current };
+  const ok = current && "out" in current ? current : null;
+  return { loading: key !== "" && current === null, out: ok?.out ?? null, used: ok?.used ?? null, failed: current !== null && "error" in current };
 }
 
-function disabledReason(o: { busy: boolean; amountIn: bigint | null; balance: bigint | null; out: bigint | null; loading: boolean; failed: boolean }) {
-  if (o.busy) return "Another action is in progress";
-  if (o.balance === null) return "Loading balance";
-  if (o.amountIn === null) return "Enter an amount";
-  if (o.amountIn > o.balance) return "Exceeds your balance";
-  if (o.failed) return "Couldn't fetch a quote";
-  if (o.loading || o.out === null) return "Fetching quote";
-  if (o.out === 0n) return "No liquidity on this side right now";
+/** The book rounds the input down to its tick; a sub-0.5% shortfall is rounding, not a thin book. */
+function dustOnly(amountIn: bigint, used: bigint) {
+  return used > 0n && used * 1000n >= amountIn * 995n;
+}
+
+type Reason = { button: string; note?: string };
+
+function disabledReason(o: {
+  busy: boolean;
+  amountIn: bigint | null;
+  balance: bigint | null;
+  out: bigint | null;
+  used: bigint | null;
+  loading: boolean;
+  failed: boolean;
+  noLiquidity: string | null;
+  impact: number | null;
+}): Reason | null {
+  if (o.busy) return { button: "Another action is in progress" };
+  if (o.noLiquidity) return { button: "No liquidity", note: o.noLiquidity };
+  if (o.balance === null) return { button: "Loading balance" };
+  if (o.amountIn === null) return { button: "Enter an amount" };
+  if (o.amountIn > o.balance) return { button: "Exceeds your balance" };
+  if (o.failed) return { button: "Quote unavailable", note: "Couldn't fetch a quote. The book may be empty or the network is slow; try again shortly." };
+  if (o.loading || o.out === null || o.used === null) return { button: "Fetching quote" };
+  if (o.out === 0n) return { button: "No liquidity", note: "Nothing on this side of the book can fill this order right now." };
+  if (o.used < o.amountIn && !dustOnly(o.amountIn, o.used)) return { button: "Amount too large", note: "The book is too thin to fill this in full. Try a smaller amount." };
+  if (o.impact !== null && o.impact > MAX_IMPACT_PCT) return { button: "Price impact too high", note: `This would move the price more than ${MAX_IMPACT_PCT}%. Try a smaller amount.` };
   return null;
 }
 
@@ -99,7 +127,7 @@ export function SpotOrderForm({ session, market, run, busy }: { session: Stealth
   const outSymbol = isBuy ? market.base : USDC.symbol;
 
   const owner = session.burner.address;
-  const book = usePoll(() => kuru.bestBidAsk(market), 3000, market.symbol).data;
+  const { data: book, error: bookError } = usePoll(() => kuru.bestBidAsk(market), 3000, market.symbol);
   const balances = usePoll(
     async () => {
       const id = await kuru.accountId(owner);
@@ -112,10 +140,10 @@ export function SpotOrderForm({ session, market, run, busy }: { session: Stealth
   const balance = balances ? (isBuy ? balances.usdc : balances.bases[marketIndex]) : null;
 
   const rawIn = parseAmount(input, inDecimals);
-  const amountIn = rawIn !== null && balance !== null ? snapToBalance(rawIn, input, balance, inDecimals) : rawIn;
-  const { loading, out, failed } = useQuote(market, isBuy, amountIn);
-
-  const reason = disabledReason({ busy, amountIn, balance, out, loading, failed });
+  const snapped = rawIn !== null && balance !== null ? snapToBalance(rawIn, input, balance, inDecimals) : rawIn;
+  const lotted = snapped !== null && !isBuy ? kuru.floorToLot(market, snapped) : snapped;
+  const amountIn = lotted === 0n ? null : lotted;
+  const { loading, out, used, failed } = useQuote(market, isBuy, amountIn);
   const minOut = out !== null ? (out * (10_000n - SLIPPAGE_BPS)) / 10_000n : null;
   const effectivePrice =
     amountIn !== null && out !== null && out > 0n
@@ -127,11 +155,18 @@ export function SpotOrderForm({ session, market, run, busy }: { session: Stealth
   const impact =
     effectivePrice !== null && ref !== null && ref > 0 ? Math.max(0, isBuy ? (effectivePrice - ref) / ref : (ref - effectivePrice) / ref) * 100 : null;
 
+  const sideEmpty = book ? ref === null : bookError !== null;
+  const noLiquidity = sideEmpty
+    ? `No ${isBuy ? "sellers" : "buyers"} on the ${market.symbol} book right now, so there is nothing to ${isBuy ? "buy" : "sell to"}. Try the other side or another market.`
+    : null;
+  const reason = disabledReason({ busy, amountIn, balance, out, used, loading, failed, noLiquidity, impact });
+
   const submit = () => {
     if (amountIn === null || reason) return;
+    const tradeIn = used !== null && used < amountIn ? used : amountIn;
     void run(async (onStep) => {
       onStep({ index: 1, total: 1, label: "Swapping on Kuru" });
-      const q = await kuru.swap(session.burner.wallet, market, isBuy, amountIn);
+      const q = await kuru.swap(session.burner.wallet, market, isBuy, tradeIn);
       const spent = formatToken(q.amountIn, inDecimals, 6);
       const got = formatToken(q.amountOut, outDecimals, 6);
       return isBuy ? `Bought ${got} ${outSymbol} for ${spent} ${inSymbol}` : `Sold ${spent} ${inSymbol} for ${got} ${outSymbol}`;
@@ -140,7 +175,8 @@ export function SpotOrderForm({ session, market, run, busy }: { session: Stealth
 
   const fillPercent = (pct: number) => {
     if (balance === null) return;
-    setInput(formatUnits((balance * BigInt(pct)) / 100n, inDecimals));
+    const raw = (balance * BigInt(pct)) / 100n;
+    setInput(formatUnits(isBuy ? raw : kuru.floorToLot(market, raw), inDecimals));
   };
   const changeSide = (s: Side) => {
     setSide(s);
@@ -209,13 +245,19 @@ export function SpotOrderForm({ session, market, run, busy }: { session: Stealth
         <Row label="Price impact" value={impact !== null ? `${impact.toFixed(2)}%` : "—"} />
       </dl>
 
+      {reason?.note && (
+        <p role="status" className="rounded-md border border-border bg-surface-2 px-2.5 py-2 text-xs leading-snug text-muted">
+          {reason.note}
+        </p>
+      )}
+
       <button
         type="button"
         disabled={reason !== null}
         onClick={submit}
         className={`h-11 w-full rounded-lg text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${isBuy ? "bg-success" : "bg-danger"}`}
       >
-        {reason ?? `${isBuy ? "Buy" : "Sell"} ${market.base}`}
+        {reason?.button ?? `${isBuy ? "Buy" : "Sell"} ${market.base}`}
       </button>
     </div>
   );

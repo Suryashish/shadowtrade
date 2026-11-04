@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { BookLevel, MarketInfo, OrderBook as OrderBookData } from "@/lib/market";
 
 type Row = { price: number; size: number; total: number } | null;
@@ -62,13 +62,19 @@ export function OrderBook({
 }) {
   const view = useMemo(() => {
     if (!book) return null;
-    const asks = withTotals([...book.asks].sort((a, b) => a.price - b.price), depth);
-    const bids = withTotals([...book.bids].sort((a, b) => b.price - a.price), depth);
+    const empty = book.asks.length === 0 && book.bids.length === 0;
+    const rawAsk = book.asks.length ? Math.min(...book.asks.map((l) => l.price)) : null;
+    const rawBid = book.bids.length ? Math.max(...book.bids.map((l) => l.price)) : null;
+    const ref = rawAsk !== null && rawBid !== null ? (rawAsk + rawBid) / 2 : (rawAsk ?? rawBid);
+    const near = (l: BookLevel) => ref === null || Math.abs(l.price - ref) <= ref * 0.1;
+    const asks = withTotals(book.asks.filter(near).sort((a, b) => a.price - b.price), depth);
+    const bids = withTotals(book.bids.filter(near).sort((a, b) => b.price - a.price), depth);
     const pad = (rows: Row[]) => Array.from({ length: depth - rows.length }, (): Row => null);
     const max = Math.max(asks.at(-1)?.total ?? 0, bids.at(-1)?.total ?? 0);
-    const bestAsk = book.asks.length ? Math.min(...book.asks.map((l) => l.price)) : null;
-    const bestBid = book.bids.length ? Math.max(...book.bids.map((l) => l.price)) : null;
+    const bestAsk = rawAsk;
+    const bestBid = rawBid;
     return {
+      empty,
       askRows: [...pad(asks), ...asks.slice().reverse()],
       bidRows: [...bids, ...pad(bids)],
       max,
@@ -76,6 +82,16 @@ export function OrderBook({
       bestBid,
     };
   }, [book, depth]);
+
+  const bidsRef = useRef<HTMLDivElement>(null);
+  const [bidCap, setBidCap] = useState(depth);
+  useEffect(() => {
+    const el = bidsRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBidCap(Math.max(1, Math.floor(el.clientHeight / 22))));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [view]);
 
   const header = (
     <div className="grid h-9 shrink-0 grid-cols-3 items-center border-b border-border px-3 text-[11px] text-faint">
@@ -100,6 +116,17 @@ export function OrderBook({
     );
   }
 
+  if (view.empty) {
+    return (
+      <div className="flex h-full flex-col">
+        {header}
+        <div className="flex flex-1 items-center justify-center px-3 text-center text-[12px] text-muted">
+          No resting orders on this market right now
+        </div>
+      </div>
+    );
+  }
+
   const mid = view.bestAsk !== null && view.bestBid !== null ? (view.bestAsk + view.bestBid) / 2 : null;
   const spread = view.bestAsk !== null && view.bestBid !== null ? view.bestAsk - view.bestBid : null;
   const spreadPct = spread !== null && mid ? (spread / mid) * 100 : null;
@@ -119,8 +146,8 @@ export function OrderBook({
           {spread !== null && spreadPct !== null ? `Spread ${fmt(spread, market.priceDecimals)} (${spreadPct.toFixed(3)}%)` : "Spread —"}
         </span>
       </div>
-      <div role="list" aria-label="Bids" className="min-h-0 flex-1 overflow-hidden">
-        {view.bidRows.map((r, i) => (
+      <div ref={bidsRef} role="list" aria-label="Bids" className="min-h-0 flex-1 overflow-hidden">
+        {view.bidRows.slice(0, bidCap).map((r, i) => (
           <BookRow key={i} row={r} side="bid" max={view.max} market={market} onPriceClick={onPriceClick} />
         ))}
       </div>

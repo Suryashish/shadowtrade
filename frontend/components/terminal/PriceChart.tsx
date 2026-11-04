@@ -7,6 +7,7 @@ import {
   HistogramSeries,
   LineStyle,
   createChart,
+  type AutoscaleInfo,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
@@ -28,6 +29,15 @@ type Palette = {
   border: string;
   surface: string;
 };
+
+// Fitting every loaded candle into a narrow chart leaves ~2px bars whose red/green wicks blur to
+// grey, so show the most recent candles at a readable spacing; older ones stay a scroll away.
+const READABLE_BAR_PX = 7;
+
+function showRecent(chart: IChartApi, count: number, width: number) {
+  const bars = Math.max(20, Math.floor(width / READABLE_BAR_PX));
+  chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, count - bars), to: count + 4 });
+}
 
 function readPalette(): Palette {
   const cs = getComputedStyle(document.documentElement);
@@ -118,6 +128,8 @@ export function PriceChart({
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const paletteRef = useRef<Palette | null>(null);
+  const lastCloseRef = useRef(0);
+  const interactedRef = useRef(false);
   const prevRef = useRef<{ key: string; res: Resolution; len: number; last: number } | null>(null);
   const [hover, setHover] = useState<Ohlc | null>(null);
 
@@ -130,20 +142,58 @@ export function PriceChart({
     const chart = createChart(el, {
       autoSize: true,
       layout: { fontFamily: "var(--font-mono), ui-monospace, monospace" },
-      timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 4 },
-      rightPriceScale: { scaleMargins: { top: 0.08, bottom: 0.22 } },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        fixLeftEdge: false,
+        rightOffset: 6,
+        barSpacing: 8,
+        minBarSpacing: 2,
+      },
+      leftPriceScale: { visible: false },
+      rightPriceScale: {
+        visible: true,
+        entireTextOnly: true,
+        minimumWidth: 64,
+        scaleMargins: { top: 0.1, bottom: 0.25 },
+      },
     });
     const candleSeries = chart.addSeries(CandlestickSeries, {
+      priceScaleId: "right",
       priceLineVisible: true,
       lastValueVisible: true,
+      upColor: palette.success,
+      downColor: palette.danger,
+      borderVisible: true,
+      borderUpColor: palette.success,
+      borderDownColor: palette.danger,
+      wickUpColor: palette.success,
+      wickDownColor: palette.danger,
+      autoscaleInfoProvider: (original: () => AutoscaleInfo | null): AutoscaleInfo | null => {
+        const r = original();
+        const last = lastCloseRef.current;
+        if (!r || !r.priceRange || !(last > 0)) return r;
+        const lo = last * 0.995;
+        const hi = last * 1.005;
+        return {
+          ...r,
+          priceRange: {
+            minValue: Math.min(r.priceRange.minValue, lo),
+            maxValue: Math.max(r.priceRange.maxValue, hi),
+          },
+        };
+      },
     });
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
-      priceScaleId: "volume",
+      priceScaleId: "vol",
       priceLineVisible: false,
       lastValueVisible: false,
     });
-    chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+    chart.priceScale("vol").applyOptions({
+      visible: false,
+      scaleMargins: { top: 0.8, bottom: 0 },
+    });
     applyTheme(chart, candleSeries, palette);
     chartRef.current = chart;
     candleRef.current = candleSeries;
@@ -159,6 +209,26 @@ export function PriceChart({
       }
     };
     chart.subscribeCrosshairMove(onMove);
+
+    // Refit on container resize unless the user has panned/zoomed manually.
+    const markInteracted = () => {
+      interactedRef.current = true;
+    };
+    el.addEventListener("pointerdown", markInteracted);
+    el.addEventListener("wheel", markInteracted, { passive: true });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let first = true;
+    const ro = new ResizeObserver(() => {
+      if (first) {
+        first = false;
+        return;
+      }
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!interactedRef.current) showRecent(chart, prevRef.current?.len ?? 0, el.clientWidth);
+      }, 150);
+    });
+    ro.observe(el);
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onScheme = () => {
@@ -177,6 +247,10 @@ export function PriceChart({
 
     return () => {
       mq.removeEventListener("change", onScheme);
+      ro.disconnect();
+      clearTimeout(timer);
+      el.removeEventListener("pointerdown", markInteracted);
+      el.removeEventListener("wheel", markInteracted);
       chart.unsubscribeCrosshairMove(onMove);
       chart.remove();
       chartRef.current = null;
@@ -201,6 +275,7 @@ export function PriceChart({
     const prev = prevRef.current;
     const len = candles.length;
     const lastC = len > 0 ? candles[len - 1] : null;
+    lastCloseRef.current = lastC ? lastC.close : 0;
     const sameSeries = prev !== null && prev.key === marketKey && prev.res === resolution;
 
     if (sameSeries && lastC && len > 0 && (len === prev.len || len === prev.len + 1) && lastC.time >= prev.last) {
@@ -210,8 +285,8 @@ export function PriceChart({
       cs.setData(candles.map((c) => toCandleData(c)));
       vs.setData(candles.map((c) => toVolumeData(c, p)));
       if (len > 0 && (!prev || prev.key !== marketKey || prev.res !== resolution || prev.len === 0)) {
-        chart.timeScale().fitContent();
-        chart.timeScale().scrollToRealTime();
+        interactedRef.current = false;
+        showRecent(chart, len, containerRef.current?.clientWidth ?? 600);
       }
     }
     prevRef.current = { key: marketKey, res: resolution, len, last: lastC ? lastC.time : 0 };
@@ -223,6 +298,7 @@ export function PriceChart({
   const up = shown ? shown.close >= shown.open : true;
   const tone = up ? "text-success" : "text-danger";
 
+  const thin = candles.length > 0 && candles.filter((c) => c.volume > 0).length < 5;
   const empty = !loading && !error && candles.length === 0;
 
   return (
@@ -240,19 +316,19 @@ export function PriceChart({
             {r.label}
           </button>
         ))}
-        <div className="ml-auto hidden min-w-0 items-center gap-2 truncate font-mono text-[11px] tabular-nums text-muted sm:flex">
+        <div className="ml-auto flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap font-mono text-[11px] tabular-nums text-muted">
           {shown && (
             <>
-              <span>
+              <span className="hidden xl:inline">
                 O <span className="text-text">{fmt(shown.open, priceDecimals)}</span>
               </span>
-              <span>
+              <span className="hidden xl:inline">
                 H <span className="text-text">{fmt(shown.high, priceDecimals)}</span>
               </span>
-              <span>
+              <span className="hidden xl:inline">
                 L <span className="text-text">{fmt(shown.low, priceDecimals)}</span>
               </span>
-              <span>
+              <span className="truncate">
                 C <span className={tone}>{fmt(shown.close, priceDecimals)}</span>
               </span>
               {change !== null && (
@@ -267,6 +343,11 @@ export function PriceChart({
       </div>
       <div className="relative min-h-0 flex-1">
         <div ref={containerRef} className="absolute inset-0" />
+        {thin && !loading && !error && (
+          <div className="pointer-events-none absolute left-2 top-2 rounded bg-surface-2/80 px-2 py-1 text-[11px] text-faint">
+            Thin market · few trades in this range
+          </div>
+        )}
         {(loading || error || empty) && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             {error ? (
