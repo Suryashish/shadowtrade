@@ -7,16 +7,13 @@ import { formatToken, formatUsd } from "@/lib/format";
 import * as kuru from "@/lib/kuru";
 import type { StealthSession, Step } from "@/lib/session";
 import type { SpotMarket } from "@/lib/config";
+import { EmptyIcons, EmptyState, SkeletonRows } from "./Panel";
 
 type Run = (job: (onStep: (s: Step) => void) => Promise<string>) => Promise<void>;
 
 const USDC = TOKENS.kuru;
 
 type Holdings = { usdc: bigint; bases: bigint[]; bids: (number | null)[] };
-
-function Empty({ children }: { children: string }) {
-  return <p className="px-3 py-8 text-center text-xs text-muted">{children}</p>;
-}
 
 export function SpotHoldings({ session, run, busy = false }: { session: StealthSession | null; run?: Run; busy?: boolean }) {
   const owner = session?.burner.address ?? null;
@@ -33,14 +30,8 @@ export function SpotHoldings({ session, run, busy = false }: { session: StealthS
     owner ?? "",
   );
 
-  if (!session) return <Empty>Enter Stealth Mode to trade. Holdings from your burner wallet appear here.</Empty>;
-  if (data === null) {
-    return (
-      <p className="px-3 py-8 text-center text-xs text-muted" aria-busy="true">
-        Loading holdings…
-      </p>
-    );
-  }
+  if (!session) return <EmptyState icon={EmptyIcons.wallet} title="No spot holdings" body="Enter Stealth Mode in the order panel to trade from a fresh wallet." />;
+  if (data === null) return <SkeletonRows rows={3} label="Loading holdings" />;
 
   const sell = (market: SpotMarket, held: bigint) => {
     if (!run) return;

@@ -8,9 +8,9 @@ import { publicClient } from "@/lib/chain";
 import { EXPLORER, KURU_ENABLED, TOKENS, VENUES, type Venue } from "@/lib/config";
 import { formatToken } from "@/lib/format";
 import type { StealthSession } from "@/lib/session";
-import { Address } from "../ui";
+import { shortAddress } from "@/lib/format";
 import { DepositForm, WithdrawForm } from "./BalanceForms";
-import { EmptyState, Panel, PanelTabs } from "./Panel";
+import { EmptyIcons, EmptyState, Panel, PanelTabs } from "./Panel";
 import { PositionsTable } from "./PositionsTable";
 import { SpotHoldings } from "./SpotHoldings";
 
@@ -35,12 +35,32 @@ function Long({ short, long }: { short: string; long: string }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="min-w-0">
-      <div className="text-[11px] text-faint">{label}</div>
-      <div className="tabular mt-1 truncate font-mono text-[13px]">{children}</div>
+    <div className="flex h-9 items-center justify-between gap-4 border-b border-border last:border-b-0">
+      <dt className="text-xs text-muted">{label}</dt>
+      <dd className="tabular flex min-w-0 items-center gap-2 font-mono text-[13px]">{children}</dd>
     </div>
+  );
+}
+
+const linkBtn = "rounded px-1.5 py-0.5 font-sans text-xs text-muted transition-colors hover:bg-surface-2 hover:text-text";
+
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <button type="button" onClick={copy} aria-label="Copy address" className={linkBtn}>
+      {copied ? "Copied" : "Copy"}
+    </button>
   );
 }
 
@@ -48,30 +68,41 @@ function SessionDetails({ session }: { session: StealthSession }) {
   const elapsed = useElapsed(session.startedAt);
   const gas = usePoll(() => publicClient.getBalance({ address: session.burner.address }), 5000, session.burner.address);
   const token = TOKENS[session.venue];
+  const explorer = `${EXPLORER}/address/${session.burner.address}`;
   return (
-    <div className="grid gap-3 p-3 md:grid-cols-[1.2fr_1fr] md:gap-4">
-      <div className="grid grid-cols-2 content-start gap-x-4 gap-y-2.5 sm:grid-cols-4">
-        <div className="col-span-2 sm:col-span-4">
-          <div className="text-[11px] text-faint">Burner wallet</div>
-          <div className="mt-1">
-            <Address address={session.burner.address} />
-          </div>
-        </div>
-        <Field label="Venue">{session.venue === "perpl" ? "Perpl perps" : "Kuru spot"}</Field>
-        <Field label="Session size">
+    <div className="grid items-start gap-4 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <dl className="border border-border px-3">
+        <Row label="Burner wallet">
+          <span>{shortAddress(session.burner.address)}</span>
+          <CopyButton value={session.burner.address} />
+          <a href={explorer} target="_blank" rel="noreferrer" className={linkBtn}>
+            Explorer ↗
+          </a>
+        </Row>
+        <Row label="Venue">{session.venue === "perpl" ? "Perpl perps" : "Kuru spot"}</Row>
+        <Row label="Session size">
           {session.bucket.toLocaleString()} {token.symbol}
-        </Field>
-        <Field label="Gas left">{gas.data === null ? "…" : `${Number(formatEther(gas.data)).toFixed(3)} MON`}</Field>
-        <Field label="Running for">{elapsed}</Field>
-      </div>
-      <div className="rounded-lg border border-border bg-surface-2 p-2.5 text-xs leading-relaxed text-muted">
-        <p className="font-medium text-text">What an observer sees</p>
-        <ul className="mt-1 space-y-0.5">
-          <li>• A brand-new wallet, funded only by the shared pool and the gas relayer.</li>
-          <li>• No transaction to or from your own wallet, ever.</li>
-          <li>• On exit, funds go back to the pool and the burner goes quiet.</li>
+        </Row>
+        <Row label="Gas left">{gas.data === null ? "…" : `${Number(formatEther(gas.data)).toFixed(3)} MON`}</Row>
+        <Row label="Running for">{elapsed}</Row>
+      </dl>
+      <div className="border border-border bg-surface-2 p-3">
+        <p className="text-xs font-semibold">What an observer sees</p>
+        <ul className="mt-2 space-y-1.5 text-xs leading-snug text-muted">
+          {[
+            "A brand-new wallet, funded only by the shared pool and the gas relayer.",
+            "No transaction to or from your own wallet, ever.",
+            "On exit, funds go back to the pool and the burner goes quiet.",
+          ].map((t) => (
+            <li key={t} className="flex gap-2">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="mt-px shrink-0 text-success">
+                <path d="m3 7.5 2.5 2.5L11 4" />
+              </svg>
+              {t}
+            </li>
+          ))}
         </ul>
-        <a href={`${EXPLORER}/address/${session.burner.address}`} target="_blank" rel="noreferrer" className="mt-2 inline-block font-medium text-accent hover:underline">
+        <a href={explorer} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-medium text-accent hover:underline">
           Verify on Monadscan ↗
         </a>
       </div>
@@ -79,51 +110,50 @@ function SessionDetails({ session }: { session: StealthSession }) {
   );
 }
 
-function PrivateBalances({ app, busy }: { app: ShadowTrade; busy: boolean }) {
-  const [venue, setVenue] = useState<Venue>("perpl");
-  const [mode, setMode] = useState<"deposit" | "withdraw">("deposit");
-  if (!app.shadow) return <EmptyState title="Private balance is locked" body="Connect and unlock with a signature to see and fund it." />;
-  const rows = VENUES.map((v) => ({ v, t: TOKENS[v], b: app.balances[v] }));
+function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid items-start gap-3 p-3 pb-5 md:grid-cols-[1.3fr_1fr]">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="h-7 text-left text-[11px] text-faint">
-            <th className="font-normal">Asset</th>
-            <th className="text-right font-normal">Private</th>
-            <th className="text-right font-normal">Wallet</th>
-            <th className="hidden text-right font-normal sm:table-cell">Pool size</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ v, t, b }) => (
-            <tr key={v} className="h-10 border-t border-border">
-              <td>
-                <span className="font-medium">{t.symbol}</span> <span className="text-faint">· {v === "perpl" ? "perps" : "spot"}</span>
-              </td>
-              <td className="tabular text-right font-mono">{formatToken(b.private)}</td>
-              <td className="tabular text-right font-mono text-muted">{formatToken(b.wallet)}</td>
-              <td className="tabular hidden text-right font-mono text-muted sm:table-cell">{formatToken(b.pool, 6, 0)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="rounded-lg border border-border p-2.5">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="flex gap-1 rounded-md bg-surface-2 p-0.5 text-xs">
+    <div className="min-w-0 border border-border px-3 py-2.5">
+      <div className="text-[11px] text-faint">{label}</div>
+      <div className="tabular mt-1 truncate font-mono text-lg font-medium">{value}</div>
+    </div>
+  );
+}
+
+function PrivateBalances({ app, busy }: { app: ShadowTrade; busy: boolean }) {
+  const [venue, setVenue] = useState<Venue>(VENUES[0]);
+  const [mode, setMode] = useState<"deposit" | "withdraw">("deposit");
+  if (!app.shadow) {
+    return <EmptyState icon={EmptyIcons.lock} title="Private balance is locked" body="Connect and unlock with a signature to see and fund it." />;
+  }
+  const b = app.balances[venue];
+  const sym = TOKENS[venue].symbol;
+  return (
+    <div className="grid items-start gap-4 p-4 pb-5 md:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="col-span-2 sm:col-span-1">
+          <Stat label={`Private balance · ${sym}`} value={formatToken(b.private)} />
+        </div>
+        <Stat label="Wallet" value={formatToken(b.wallet)} />
+        <Stat label="Pool size" value={formatToken(b.pool, 6, 0)} />
+      </div>
+      <div className="border border-border p-3">
+        <div className="mb-2.5 flex items-center justify-between">
+          <div className="flex gap-1 rounded bg-surface-2 p-0.5 text-xs">
             {(["deposit", "withdraw"] as const).map((m) => (
-              <button key={m} onClick={() => setMode(m)} className={`rounded px-2.5 py-1 capitalize ${mode === m ? "bg-surface text-text shadow-card" : "text-muted"}`}>
+              <button key={m} onClick={() => setMode(m)} className={`rounded-sm px-2.5 py-1 capitalize ${mode === m ? "bg-surface text-text shadow-card" : "text-muted"}`}>
                 {m}
               </button>
             ))}
           </div>
-          <div className="flex gap-1 text-xs">
-            {VENUES.map((v) => (
-              <button key={v} onClick={() => setVenue(v)} className={`rounded px-2 py-1 ${venue === v ? "bg-accent-soft text-accent" : "text-muted hover:text-text"}`}>
-                {TOKENS[v].symbol}
-              </button>
-            ))}
-          </div>
+          {VENUES.length > 1 && (
+            <div className="flex gap-1 text-xs">
+              {VENUES.map((v) => (
+                <button key={v} onClick={() => setVenue(v)} className={`rounded px-2 py-1 ${venue === v ? "bg-accent-soft text-accent" : "text-muted hover:text-text"}`}>
+                  {TOKENS[v].symbol}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {mode === "deposit" ? <DepositForm key={venue} app={app} venue={venue} busy={busy} /> : <WithdrawForm key={venue} app={app} venue={venue} busy={busy} />}
       </div>
@@ -136,7 +166,8 @@ export function BottomPanel({ app, onSelectPerp }: { app: ShadowTrade; onSelectP
   const [tab, setTab] = useState<Tab>(app.session?.venue === "kuru" ? "holdings" : "positions");
   const busy = app.activity.kind === "busy";
   const session = app.session;
-  const total = app.shadow ? Number(app.balances.perpl.private + app.balances.kuru.private) / 1e6 : null;
+  // Only venues that are enabled count; a disabled venue's balance isn't usable here.
+  const total = app.shadow ? VENUES.reduce((sum, v) => sum + Number(app.balances[v].private) / 10 ** TOKENS[v].decimals, 0) : null;
 
   return (
     <Panel className="h-full">
@@ -151,8 +182,11 @@ export function BottomPanel({ app, onSelectPerp }: { app: ShadowTrade; onSelectP
         ]}
         right={
           total !== null && (
-            <span className="tabular hidden font-mono text-[11px] text-muted sm:inline">
-              Private ${total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            <span className="hidden items-baseline gap-1.5 text-[11px] text-faint sm:inline-flex">
+              Private balance
+              <span className="tabular font-mono text-xs text-text">
+                ${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
             </span>
           )
         }
@@ -166,7 +200,7 @@ export function BottomPanel({ app, onSelectPerp }: { app: ShadowTrade; onSelectP
           (session ? (
             <SessionDetails session={session} />
           ) : (
-            <EmptyState title="No active session" body="Enter Stealth Mode from the order panel. Your burner wallet's details appear here." />
+            <EmptyState icon={EmptyIcons.shield} title="No active session" body="Enter Stealth Mode from the order panel. Your burner wallet's details appear here." />
           ))}
         {tab === "balance" && <PrivateBalances app={app} busy={busy} />}
       </div>

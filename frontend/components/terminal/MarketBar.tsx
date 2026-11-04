@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VENUES, type Venue } from "@/lib/config";
 import type { MarketInfo, MarketStats } from "@/lib/market";
+import { COIN_DEFS } from "../landing/coins";
 
 type Entry = { info: MarketInfo; stats: MarketStats | null };
 
@@ -38,20 +39,30 @@ function hueOf(s: string) {
   return h;
 }
 
-function Badge({ base, size = 24 }: { base: string; size?: number }) {
-  const hue = hueOf(base);
+/** Strip wrapper/synthetic prefixes so e.g. WETH resolves to the ETH mark. */
+function coinFor(base: string) {
+  const id = base.toLowerCase();
+  return COIN_DEFS.find((c) => c.id.toLowerCase() === id && c.label !== "");
+}
+
+export function CoinMark({ base, size = 24 }: { base: string; size?: number }) {
+  const def = coinFor(base);
+  const color = def?.color ?? `hsl(${hueOf(base)} 12% 42%)`;
+  const label = base.length <= 4 ? base.toUpperCase() : base.slice(0, 3).toUpperCase();
+  const fontSize = Math.max(7, Math.round(size * (label.length >= 4 ? 0.27 : label.length === 3 ? 0.31 : 0.4)));
   return (
     <span
       aria-hidden
-      className="inline-flex shrink-0 items-center justify-center rounded-full text-[10px] font-semibold"
+      className="inline-flex shrink-0 items-center justify-center rounded-full font-sans font-extrabold leading-none tracking-tight text-white"
       style={{
         width: size,
         height: size,
-        backgroundColor: `hsl(${hue} 60% 45%)`,
-        color: "#fff",
+        fontSize,
+        backgroundColor: color,
+        boxShadow: def?.id === "NEAR" ? "inset 0 0 0 1.5px rgba(255,255,255,0.85)" : `inset 0 0 0 1px ${def?.edge ?? "rgba(0,0,0,0.25)"}`,
       }}
     >
-      {base.slice(0, 2).toUpperCase()}
+      {label}
     </span>
   );
 }
@@ -121,7 +132,7 @@ function MarketPicker({
     <div
       ref={rootRef}
       onKeyDown={onKeyDown}
-      className="fixed inset-x-3 top-[104px] z-40 rounded-xl sm:absolute sm:inset-x-auto sm:left-0 sm:top-full sm:mt-1 sm:w-[420px] border border-border-strong bg-surface shadow-pop"
+      className="fixed inset-x-3 top-[104px] z-40 rounded-xl sm:absolute sm:inset-x-auto sm:left-0 sm:top-full sm:mt-1 sm:w-[420px] border border-border-strong bg-surface shadow-pop overflow-hidden"
     >
       <div className="border-b border-border p-2">
         <input
@@ -136,7 +147,7 @@ function MarketPicker({
           className="h-8 w-full rounded-md border border-border bg-surface-2 px-2 text-xs text-text outline-none placeholder:text-faint focus:border-accent"
         />
       </div>
-      <div className="grid h-7 grid-cols-[1.4fr_1fr_0.9fr_1fr] items-center px-3 text-[11px] text-faint">
+      <div className="grid h-7 grid-cols-[1.4fr_1fr_0.9fr_1fr] items-center border-b border-border px-3 text-[11px] text-faint">
         <span>Market</span>
         <span className="text-right">Last price</span>
         <span className="text-right">24h change</span>
@@ -156,16 +167,17 @@ function MarketPicker({
               tabIndex={-1}
               onMouseEnter={() => setCursor(i)}
               onClick={() => onSelect(m.info.key)}
-              className={`grid h-9 cursor-pointer grid-cols-[1.4fr_1fr_0.9fr_1fr] items-center px-3 text-xs ${
+              className={`relative grid h-10 cursor-pointer grid-cols-[1.4fr_1fr_0.9fr_1fr] items-center px-3 text-xs transition-colors hover:bg-surface-2 ${
                 isSel ? "bg-accent-soft" : isActive ? "bg-surface-2" : ""
               }`}
             >
+              {isSel && <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-accent" />}
               <span className="flex min-w-0 items-center gap-2">
-                <Badge base={m.info.base} size={18} />
+                <CoinMark base={m.info.base} size={22} />
                 <span className="truncate font-medium text-text">{m.info.name}</span>
                 {m.info.maxLeverage !== null && (
-                  <span className="hidden rounded bg-surface-3 px-1 sm:inline font-mono text-[10px] text-muted">
-                    {m.info.maxLeverage}x
+                  <span className="hidden rounded-sm border border-border px-1 py-px font-mono text-[10px] leading-none text-muted sm:inline">
+                    {m.info.maxLeverage}×
                   </span>
                 )}
               </span>
@@ -241,7 +253,7 @@ export function MarketBar({
           className="flex h-9 items-center gap-2 rounded-md px-1 hover:bg-surface-2 sm:px-2"
         >
           <span className="hidden sm:inline-flex">
-            <Badge base={selected.base} />
+            <CoinMark base={selected.base} size={28} />
           </span>
           <span className="whitespace-nowrap text-sm font-semibold text-text sm:text-[15px]">{selected.name}</span>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="text-muted">
@@ -282,6 +294,17 @@ export function MarketBar({
           <Stat label="24h Volume">{usd(stats?.volume24h ?? null)}</Stat>
           {stats?.openInterest != null && <Stat label="Open Interest">{usd(stats.openInterest)}</Stat>}
         </div>
+      </div>
+
+      <div className="hidden shrink-0 items-center gap-1.5 lg:flex">
+        {venue === "perpl" && selected.maxLeverage !== null && (
+          <span className="inline-flex h-6 items-center rounded-sm border border-border px-2 font-mono text-[11px] text-muted">
+            Max <span className="ml-1 text-text">{selected.maxLeverage}×</span>
+          </span>
+        )}
+        <span className="inline-flex h-6 items-center rounded-sm border border-border bg-surface-2 px-2 text-[11px] font-medium text-muted">
+          {venue === "perpl" ? "Perpl" : "Kuru"}
+        </span>
       </div>
     </div>
   );

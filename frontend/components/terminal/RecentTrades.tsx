@@ -28,7 +28,7 @@ export function RecentTrades({ trades, market }: { trades: Trade[] | null; marke
   }, []);
   return (
     <div className="flex h-full flex-col">
-      <div className="grid h-9 shrink-0 grid-cols-3 items-center border-b border-border px-3 text-[11px] text-faint">
+      <div className="grid h-9 shrink-0 grid-cols-3 items-center border-b border-border px-3 text-[11px] font-medium text-faint">
         <span className="text-left">Price ({market.quote})</span>
         <span className="text-right">Size ({market.base})</span>
         <span className="text-right">Time</span>
@@ -49,15 +49,15 @@ export function RecentTrades({ trades, market }: { trades: Trade[] | null; marke
             <div
               key={t.id}
               role="listitem"
-              className={`grid h-[22px] grid-cols-3 items-center px-3 font-mono text-xs tabular hover:bg-surface-2 ${
+              className={`grid h-[22px] grid-cols-3 items-center px-3 font-mono text-xs tabular transition-colors hover:bg-surface-2 ${
                 i === 0 ? (t.side === "buy" ? "flash-up" : "flash-down") : ""
               }`}
             >
-              <span className={`text-left ${t.side === "buy" ? "text-success" : "text-danger"}`}>
+              <span className={`text-left font-medium ${t.side === "buy" ? "text-success" : "text-danger"}`}>
                 {fmt(t.price, market.priceDecimals)}
               </span>
               <span className="text-right text-text">{fmt(t.size, market.sizeDecimals)}</span>
-              <span className="text-right text-faint" title={new Date(t.time * 1000).toLocaleString()}>{fmtTime(t.time, now)}</span>
+              <span className="text-right text-[11px] text-faint" title={new Date(t.time * 1000).toLocaleString()}>{fmtTime(t.time, now)}</span>
             </div>
           ))}
         </div>

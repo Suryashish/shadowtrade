@@ -3,6 +3,7 @@
 import { usePoll } from "@/hooks/usePoll";
 import { closePosition, getAccount, getPosition, liquidationPrice, type PerpMarket, type Position } from "@/lib/perpl";
 import type { StealthSession, Step } from "@/lib/session";
+import { EmptyIcons, EmptyState, SkeletonRows } from "./Panel";
 
 type Run = (job: (onStep: (s: Step) => void) => Promise<string>) => Promise<void>;
 
@@ -42,15 +43,16 @@ function derive(item: Open) {
     pnlText: `${signed(pnl)} (${roe >= 0 ? "+" : ""}${roe.toFixed(2)}%)`,
     tone: pnl >= 0 ? "text-success" : "text-danger",
     sideTone: p.side === "long" ? "text-success" : "text-danger",
+    sidePill: p.side === "long" ? "bg-success-soft text-success" : "bg-danger-soft text-danger",
     sideLabel: p.side === "long" ? "Long" : "Short",
   };
 }
 
 const closeBtn =
-  "h-7 rounded-md border border-border px-2.5 text-xs text-text transition-colors hover:border-faint hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50";
+  "h-7 rounded border border-border-strong px-2.5 text-xs font-medium text-text transition-colors hover:border-faint hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50";
 
-function Empty({ children }: { children: string }) {
-  return <p className="px-3 py-8 text-center text-xs text-muted">{children}</p>;
+function SidePill({ tone, children }: { tone: string; children: string }) {
+  return <span className={`rounded-sm px-1.5 py-px text-[11px] font-medium ${tone}`}>{children}</span>;
 }
 
 export function PositionsTable({
@@ -80,15 +82,11 @@ export function PositionsTable({
     `${owner ?? ""}:${accountId ?? ""}:${markets.length}`,
   );
 
-  if (!session) return <Empty>Enter Stealth Mode to trade. Positions from your burner wallet appear here.</Empty>;
-  if (data === null) {
-    return (
-      <p className="px-3 py-8 text-center text-xs text-muted" aria-busy="true">
-        Loading positions…
-      </p>
-    );
+  if (!session) {
+    return <EmptyState icon={EmptyIcons.shield} title="No open positions" body="Enter Stealth Mode in the order panel to trade from a fresh wallet." />;
   }
-  if (data.length === 0) return <Empty>No open positions</Empty>;
+  if (data === null) return <SkeletonRows rows={3} label="Loading positions" />;
+  if (data.length === 0) return <EmptyState title="No open positions" body="Your positions on Perpl appear here." />;
 
   const close = (item: Open) =>
     run(async (onStep) => {
@@ -99,13 +97,18 @@ export function PositionsTable({
 
   const headers = ["Market", "Size", "Notional", "Entry", "Mark", "Liq. price", "Margin", "PnL (ROE%)", ""];
   const hideBelowXl = (i: number) => (i === 2 || i === 6 ? "hidden xl:table-cell" : "");
+  const rows = data.map(derive);
+  const totalNotional = rows.reduce((a, d) => a + d.notional, 0);
+  const totalMargin = rows.reduce((a, d) => a + d.margin, 0);
+  const totalPnl = rows.reduce((a, d) => a + d.pnl, 0);
+  const totalTone = totalPnl >= 0 ? "text-success" : "text-danger";
 
   return (
     <>
       <div className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[640px] border-collapse text-xs">
           <thead>
-            <tr className="text-left text-[11px] text-faint">
+            <tr className="border-b border-border text-left text-[11px] text-faint">
               {headers.map((h, i) => (
                 <th
                   key={i}
@@ -129,7 +132,7 @@ export function PositionsTable({
                       className="flex items-center gap-2 font-medium hover:underline"
                     >
                       {item.market.symbol}
-                      <span className={`text-[11px] ${d.sideTone}`}>{d.sideLabel}</span>
+                      <SidePill tone={d.sidePill}>{d.sideLabel}</SidePill>
                     </button>
                   </td>
                   <td className={`px-3 text-right font-mono tabular ${d.sideTone}`}>{d.sizeText}</td>
@@ -148,6 +151,19 @@ export function PositionsTable({
               );
             })}
           </tbody>
+          <tfoot>
+            <tr className="h-9 bg-surface-2 text-[11px]">
+              <td className="px-3 font-medium text-muted">Total</td>
+              <td />
+              <td className="tabular hidden px-3 text-right font-mono text-xs xl:table-cell">{formatUsd(totalNotional)}</td>
+              <td />
+              <td />
+              <td />
+              <td className="tabular hidden px-3 text-right font-mono text-xs xl:table-cell">{formatUsd(totalMargin)}</td>
+              <td className={`tabular px-3 text-right font-mono text-xs font-medium ${totalTone}`}>{signed(totalPnl)}</td>
+              <td className="sticky right-0 border-l border-border bg-surface-2" />
+            </tr>
+          </tfoot>
         </table>
       </div>
 
@@ -159,7 +175,7 @@ export function PositionsTable({
               <div className="flex items-center justify-between gap-3">
                 <button type="button" onClick={() => onSelectMarket?.(item.market.id)} className="flex items-center gap-2 text-[13px] font-medium">
                   {item.market.symbol}
-                  <span className={`text-[11px] ${d.sideTone}`}>{d.sideLabel}</span>
+                  <SidePill tone={d.sidePill}>{d.sideLabel}</SidePill>
                 </button>
                 <span className={`font-mono text-xs tabular ${d.tone}`}>{d.pnlText}</span>
               </div>
@@ -185,6 +201,11 @@ export function PositionsTable({
           );
         })}
       </ul>
+      <div className="flex h-9 items-center justify-between gap-3 border-t border-border bg-surface-2 px-3 text-xs md:hidden">
+        <span className="font-medium text-muted">Total</span>
+        <span className="tabular font-mono text-muted">{formatUsd(totalNotional)}</span>
+        <span className={`tabular font-mono font-medium ${totalTone}`}>{signed(totalPnl)}</span>
+      </div>
     </>
   );
 }

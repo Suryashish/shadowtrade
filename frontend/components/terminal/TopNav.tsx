@@ -17,17 +17,21 @@ export function TopNav({ wallet, app }: { wallet: WalletState; app: ShadowTrade 
         </Link>
         <nav className="hidden items-center gap-4 text-[13px] md:flex">
           <span className="font-medium text-text">Trade</span>
-          <a href="https://testnet.monadscan.com" target="_blank" rel="noreferrer" className="text-muted hover:text-text">
+          <a href="https://testnet.monadscan.com" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-muted transition-colors hover:text-text">
             Explorer
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden>
+              <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </a>
         </nav>
       </div>
       <div className="flex items-center gap-2">
-        <span className={`hidden rounded-md px-2 py-1 text-[11px] font-medium sm:inline ${IS_FORK ? "bg-warning-soft text-warning" : "bg-surface-2 text-muted"}`}>
+        <span className={`hidden h-8 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium sm:inline-flex ${IS_FORK ? "border-transparent text-warning" : "border-border bg-surface-2 text-muted"}`}>
+          {IS_FORK && <span aria-hidden className="size-1.5 rounded-full bg-warning" />}
           {IS_FORK ? "Local fork" : "Monad Testnet"}
         </span>
         {session && (
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-accent-soft px-2 py-1 text-[11px] font-medium text-accent" title={`Burner ${session.burner.address}`}>
+          <span className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md bg-accent-soft px-2.5 text-[11px] font-medium text-accent" title={`Burner ${session.burner.address}`}>
             <span className="size-1.5 animate-pulse rounded-full bg-accent" />
             Stealth
             <span className="hidden font-mono md:inline">· {shortAddress(session.burner.address)}</span>

@@ -185,7 +185,7 @@ export function SpotOrderForm({ session, market, run, busy }: { session: Stealth
 
   return (
     <div className="space-y-3 px-3 py-3">
-      <div role="radiogroup" aria-label="Side" className="grid grid-cols-2 gap-1 rounded-lg bg-surface-2 p-1">
+      <div role="radiogroup" aria-label="Side" className="grid grid-cols-2 gap-1 rounded-md bg-surface-2 p-1">
         {(["buy", "sell"] as const).map((s) => {
           const active = s === side;
           const fill = s === "buy" ? "bg-success" : "bg-danger";
@@ -214,7 +214,7 @@ export function SpotOrderForm({ session, market, run, busy }: { session: Stealth
       </div>
 
       <div>
-        <label className="flex h-10 items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 focus-within:border-accent">
+        <label className="flex h-10 items-center gap-2 rounded-md border border-border bg-surface-2 px-3 focus-within:border-accent">
           <span className="shrink-0 text-xs text-faint">{isBuy ? "Spend" : "Sell"}</span>
           <input
             inputMode="decimal"
@@ -255,7 +255,7 @@ export function SpotOrderForm({ session, market, run, busy }: { session: Stealth
         type="button"
         disabled={reason !== null}
         onClick={submit}
-        className={`h-11 w-full rounded-lg text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${isBuy ? "bg-success" : "bg-danger"}`}
+        className={`h-11 w-full rounded-md text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:border disabled:border-border disabled:bg-surface-2 disabled:text-muted disabled:opacity-100 ${isBuy ? "bg-success" : "bg-danger"}`}
       >
         {reason?.button ?? `${isBuy ? "Buy" : "Sell"} ${market.base}`}
       </button>

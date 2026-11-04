@@ -79,10 +79,12 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 const chip =
-  "h-6 flex-1 rounded-md border border-border bg-surface-2 text-xs text-muted transition-colors hover:border-faint hover:text-text";
+  "h-6 flex-1 rounded-md border border-border bg-surface-2 text-xs text-muted transition-colors hover:border-faint hover:text-text disabled:cursor-not-allowed disabled:opacity-50";
 
-const leverageChip =
-  "h-6 rounded-md border border-border bg-surface-2 px-2 text-[11px] text-muted transition-colors hover:border-faint hover:text-text";
+const leverageChip = (active: boolean) =>
+  `tabular h-6 rounded-md border px-2 font-mono text-[11px] transition-colors ${
+    active ? "border-accent bg-accent-soft text-accent" : "border-border bg-surface-2 text-muted hover:border-faint hover:text-text"
+  }`;
 
 export function PerpsOrderForm({
   session,
@@ -140,8 +142,8 @@ export function PerpsOrderForm({
   const ticks = Array.from(new Set([1, mid, market.maxLeverage]));
 
   return (
-    <div className="flex min-h-full flex-col gap-2 px-3 pb-0 pt-3">
-      <div role="radiogroup" aria-label="Direction" className="grid grid-cols-2 gap-1 rounded-lg bg-surface-2 p-1">
+    <div className="flex flex-col gap-2.5 px-3 pb-3 pt-3">
+      <div role="radiogroup" aria-label="Direction" className="grid grid-cols-2 gap-1 rounded-md bg-surface-2 p-1">
         {(["long", "short"] as const).map((s) => {
           const active = s === side;
           const fill = s === "long" ? "bg-success" : "bg-danger";
@@ -162,12 +164,20 @@ export function PerpsOrderForm({
 
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted">Available</span>
-        <span className="font-mono tabular">{account ? `${formatUsd(Number(free) / CNS)} AUSD` : "—"}</span>
+        <button
+          type="button"
+          disabled={!account}
+          onClick={() => fillPercent(100)}
+          title="Use full balance"
+          className="font-mono tabular underline-offset-4 enabled:hover:text-accent enabled:hover:underline disabled:cursor-default"
+        >
+          {account ? `${formatUsd(Number(free) / CNS)} AUSD` : "—"}
+        </button>
       </div>
 
       <div>
         <label
-          className={`flex h-9 items-center gap-2 rounded-lg border bg-surface-2 px-3 ${over ? "border-danger" : "border-border focus-within:border-accent"}`}
+          className={`flex h-9 items-center gap-2 rounded-md border bg-surface-2 px-3 ${over ? "border-danger" : "border-border focus-within:border-accent"}`}
         >
           <span className="shrink-0 text-xs text-faint">Collateral</span>
           <input
@@ -203,11 +213,11 @@ export function PerpsOrderForm({
           <span className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-xs tabular text-text">{lev}x</span>
           <div className="ml-auto flex gap-1">
             {leverageChips.map((x) => (
-              <button key={x} type="button" className={leverageChip} onClick={() => setLeverage(x)}>
+              <button key={x} type="button" aria-pressed={lev === x} className={leverageChip(lev === x)} onClick={() => setLeverage(x)}>
                 {x}x
               </button>
             ))}
-            <button type="button" className={leverageChip} onClick={() => setLeverage(market.maxLeverage)}>
+            <button type="button" aria-pressed={lev === market.maxLeverage} className={leverageChip(lev === market.maxLeverage)} onClick={() => setLeverage(market.maxLeverage)}>
               Max
             </button>
           </div>
@@ -229,7 +239,7 @@ export function PerpsOrderForm({
         </div>
       </div>
 
-      <dl className="space-y-1 border-t border-border pt-2" aria-live="polite">
+      <dl className="space-y-1.5 border-t border-border pt-2.5" aria-live="polite">
         <Row label="Size" value={showValues ? `${formatSize(size, market.sizeDecimals)} ${market.symbol}` : "—"} />
         <Row label="Notional" value={showValues ? formatUsd(notional) : "—"} />
         <Row label="Est. entry (mark)" value={mark !== null ? formatPx(toPrice(market, mark), market.priceDecimals) : "—"} />
@@ -238,13 +248,15 @@ export function PerpsOrderForm({
         <Row label="Max slippage" value="1%" />
       </dl>
 
-      <div className="sticky bottom-0 z-10 mt-auto -mx-3 border-t border-border bg-surface px-3 pb-2 pt-2">
+      <div>
         {tooSmall && <p className="mb-1.5 text-[11px] text-warning">Minimum order is about $10 notional</p>}
         <button
           type="button"
           disabled={reason !== null}
           onClick={submit}
-          className={`h-10 w-full rounded-lg text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 ${isLong ? "bg-success" : "bg-danger"}`}
+          className={`h-10 w-full rounded-md text-[13px] font-semibold transition-opacity ${
+            reason !== null ? "cursor-not-allowed border border-border bg-surface-2 text-muted" : `text-white hover:opacity-90 ${isLong ? "bg-success" : "bg-danger"}`
+          }`}
         >
           {reason ?? label}
         </button>

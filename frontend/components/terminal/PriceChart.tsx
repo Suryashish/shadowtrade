@@ -26,6 +26,7 @@ type Palette = {
   danger: string;
   grid: string;
   muted: string;
+  faint: string;
   border: string;
   surface: string;
 };
@@ -36,7 +37,9 @@ const READABLE_BAR_PX = 7;
 
 function showRecent(chart: IChartApi, count: number, width: number) {
   const bars = Math.max(20, Math.floor(width / READABLE_BAR_PX));
-  chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, count - bars), to: count + 4 });
+  // `from` may go negative: with few candles the bars keep their readable width and sit at the right
+  // edge instead of stretching to fill the pane.
+  chart.timeScale().setVisibleLogicalRange({ from: count - bars, to: count + 4 });
 }
 
 function readPalette(): Palette {
@@ -47,6 +50,7 @@ function readPalette(): Palette {
     danger: get("--danger", "#f6465d"),
     grid: get("--chart-grid", "#1c2029"),
     muted: get("--muted", "#8e95a2"),
+    faint: get("--faint", "#6b7280"),
     border: get("--border", "#1c2029"),
     surface: get("--surface", "#0f1115"),
   };
@@ -79,7 +83,7 @@ function applyTheme(
   chart.applyOptions({
     layout: {
       background: { color: "transparent" },
-      textColor: p.muted,
+      textColor: p.faint,
       fontSize: 11,
       attributionLogo: false,
     },
@@ -129,6 +133,7 @@ export function PriceChart({
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const paletteRef = useRef<Palette | null>(null);
   const lastCloseRef = useRef(0);
+  const candlesRef = useRef<Candle[]>([]);
   const interactedRef = useRef(false);
   const prevRef = useRef<{ key: string; res: Resolution; len: number; last: number } | null>(null);
   const [hover, setHover] = useState<Ohlc | null>(null);
@@ -239,7 +244,8 @@ export function PriceChart({
         paletteRef.current = next;
         applyTheme(chart, candleSeries, next);
         if (prev && (prev.success !== next.success || prev.danger !== next.danger)) {
-          prevRef.current = null; // force volume recolor on next data sync
+          // Recolor volume in place; never touch the visible range or the data sync state.
+          volumeSeries.setData(candlesRef.current.map((c) => toVolumeData(c, next)));
         }
       });
     };
@@ -276,6 +282,7 @@ export function PriceChart({
     const len = candles.length;
     const lastC = len > 0 ? candles[len - 1] : null;
     lastCloseRef.current = lastC ? lastC.close : 0;
+    candlesRef.current = candles;
     const sameSeries = prev !== null && prev.key === marketKey && prev.res === resolution;
 
     if (sameSeries && lastC && len > 0 && (len === prev.len || len === prev.len + 1) && lastC.time >= prev.last) {

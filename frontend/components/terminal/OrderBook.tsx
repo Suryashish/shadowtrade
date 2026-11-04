@@ -33,7 +33,7 @@ function BookRow({
   if (!row) return <div className="h-[22px] shrink-0" aria-hidden />;
   const pct = max > 0 ? Math.min(100, (row.total / max) * 100) : 0;
   const color = side === "bid" ? "text-success" : "text-danger";
-  const bar = side === "bid" ? "bg-success-soft" : "bg-danger-soft";
+  const bar = side === "bid" ? "bg-success/15" : "bg-danger/15";
   return (
     <button
       type="button"
@@ -78,6 +78,8 @@ export function OrderBook({
       askRows: [...pad(asks), ...asks.slice().reverse()],
       bidRows: [...bids, ...pad(bids)],
       max,
+      askTotal: asks.at(-1)?.total ?? 0,
+      bidTotal: bids.at(-1)?.total ?? 0,
       bestAsk,
       bestBid,
     };
@@ -129,6 +131,8 @@ export function OrderBook({
 
   const mid = view.bestAsk !== null && view.bestBid !== null ? (view.bestAsk + view.bestBid) / 2 : null;
   const spread = view.bestAsk !== null && view.bestBid !== null ? view.bestAsk - view.bestBid : null;
+  const sideSum = view.askTotal + view.bidTotal;
+  const bidShare = sideSum > 0 ? (view.bidTotal / sideSum) * 100 : 50;
   const spreadPct = spread !== null && mid ? (spread / mid) * 100 : null;
 
   return (
@@ -150,6 +154,17 @@ export function OrderBook({
         {view.bidRows.slice(0, bidCap).map((r, i) => (
           <BookRow key={i} row={r} side="bid" max={view.max} market={market} onPriceClick={onPriceClick} />
         ))}
+      </div>
+      <div
+        className="flex h-8 shrink-0 items-center gap-2 border-t border-border px-3 font-mono text-[11px] tabular"
+        role="img"
+        aria-label={`Bids ${bidShare.toFixed(0)} percent, asks ${(100 - bidShare).toFixed(0)} percent`}
+      >
+        <span className="text-success">B {bidShare.toFixed(0)}%</span>
+        <span className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-danger/70">
+          <span className="h-full bg-success" style={{ width: `${bidShare}%` }} />
+        </span>
+        <span className="text-danger">{(100 - bidShare).toFixed(0)}% S</span>
       </div>
     </div>
   );

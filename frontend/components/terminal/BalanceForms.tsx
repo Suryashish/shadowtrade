@@ -24,7 +24,7 @@ const fmtAmount = (v: number) => v.toLocaleString(undefined, { maximumFractionDi
 function AmountInput({ value, onChange, unit, max }: { value: string; onChange: (v: string) => void; unit: string; max: number }) {
   return (
     <div>
-      <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 focus-within:border-accent">
+      <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-surface-2 px-3 focus-within:border-accent">
         <span className="text-xs text-faint">Amount</span>
         <input
           inputMode="decimal"
@@ -64,7 +64,7 @@ function SubmitButton({ label, disabled, onClick }: { label: string; disabled: b
     <button
       onClick={onClick}
       disabled={disabled}
-      className="h-9 w-full rounded-lg bg-accent text-sm font-medium text-accent-text transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-faint"
+      className="h-9 w-full rounded-md bg-accent text-[13px] font-semibold text-accent-text transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:border disabled:border-border disabled:bg-surface-2 disabled:text-muted"
     >
       {label}
     </button>
@@ -80,7 +80,7 @@ export function DepositForm({ app, venue, busy }: { app: ShadowTrade; venue: Ven
   const problem = busy ? "Working…" : !value ? "Enter an amount" : value > max ? `Not enough ${token.symbol} in wallet` : null;
   if (app.balancesLoaded && max === 0) {
     return (
-      <div className="rounded-lg border border-border bg-surface-2 p-3 text-xs leading-relaxed">
+      <div className="rounded-md border border-border bg-surface-2 p-3 text-xs leading-relaxed">
         <p className="font-medium">No {token.symbol} in this wallet yet</p>
         <p className="mt-1 text-muted">{TOKEN_SOURCES[venue].hint}</p>
         <a href={TOKEN_SOURCES[venue].url} target="_blank" rel="noreferrer" className="mt-2 inline-block font-medium text-accent hover:underline">
@@ -90,7 +90,7 @@ export function DepositForm({ app, venue, busy }: { app: ShadowTrade; venue: Ven
     );
   }
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <AmountInput value={amount} onChange={setAmount} unit={token.symbol} max={max} />
       <p className="h-3 text-[11px] leading-none text-warning">{odd ? "Odd amounts are easier to trace. Round numbers blend in." : ""}</p>
       <SubmitButton
@@ -124,9 +124,9 @@ export function WithdrawForm({ app, venue, busy }: { app: ShadowTrade; venue: Ve
             : null;
   const badAddress = to !== "" && !isAddress(to);
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <AmountInput value={amount} onChange={setAmount} unit={token.symbol} max={max} />
-      <label className={`flex h-9 items-center gap-2 rounded-lg border bg-surface-2 px-3 ${badAddress ? "border-danger" : "border-border focus-within:border-accent"}`}>
+      <label className={`flex h-9 items-center gap-2 rounded-md border bg-surface-2 px-3 ${badAddress ? "border-danger" : "border-border focus-within:border-accent"}`}>
         <span className="text-xs text-faint">To</span>
         <input
           value={to}
