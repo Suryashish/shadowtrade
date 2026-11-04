@@ -1,0 +1,2 @@
+# Circuit artifacts are checked by SHA-256 in the 0xbow SDK; line-ending conversion breaks proving.
+frontend/public/artifacts/** -text
