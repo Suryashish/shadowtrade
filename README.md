@@ -50,7 +50,7 @@ The private balance is a [0xbow Privacy Pool](https://0xbow.io). Unlink was the 
 - **Spot swaps** with quote and price impact; **spot holdings**.
 - **Private balance** deposit and withdraw forms.
 - **Stealth flow:** a 4-step onboarding in the order panel (connect, deposit to private balance, pick a bucket, Enter Stealth Mode), then trade, then Exit Stealth Mode.
-- **Encrypted session resume:** the burner key is encrypted (AES-GCM, key derived from your unlock signature) and saved before any funds move. After a refresh, "Sign to resume" restores the same burner. The key is cleared on exit.
+- **Recoverable sessions:** burner *n* is derived from your unlock signature (hash of a signature-derived seed and *n*), so no key is ever stored. Each session takes the next never-used index, so burners stay unrelated on-chain and are never reused. Unlocking on any browser or device re-derives your burners and restores any session that still holds funds or positions, so it can always be exited, even after site data is cleared. The sign message names the app, chain and what it unlocks, and the first unlock on a device signs twice to reject wallets that don't sign deterministically.
 - **Silent wallet reconnect** after reload (`eth_accounts`, no popup).
 - Bottom panel tabs (positions, holdings, session, balance), toasts, **mobile view switcher**, dark and light themes.
 
@@ -76,7 +76,7 @@ Also: `app/icon.svg` (favicon) and `app/opengraph-image.tsx` (share card; set `N
 |---|---|
 | `frontend/lib/config.ts` | All addresses, tokens, spot markets, withdrawal buckets, gas drip |
 | `frontend/lib/session.ts` | The stealth session flow: fund burner, trade, close, sweep back to pool |
-| `frontend/lib/keys.ts` | Signature-derived Privacy Pools master keys and session-vault key; in-memory burner key creation |
+| `frontend/lib/keys.ts` | Signature-derived Privacy Pools master keys and burner seed; burner *n* derivation |
 | `frontend/lib/notes.ts` | Note recovery from public pool events, withdrawal planning, Groth16 proof building (0xbow SDK) |
 | `frontend/lib/pool.ts` | Private balance: deposit, ZK withdraw via the relayer (re-proves if a new root lands first), circuit loading |
 | `frontend/lib/poolIndex.server.ts`, `frontend/app/api/pool/route.ts` | Server indexer of pool events and the ASP (approves deposits, posts association-set roots) |
@@ -85,7 +85,7 @@ Also: `app/icon.svg` (favicon) and `app/opengraph-image.tsx` (share card; set `N
 | `frontend/lib/perplFeed.ts` | Client for Perpl candles, book, trades and the SSE stream |
 | `frontend/lib/kuru.ts` | Kuru quotes and spot swaps through AccountCore. Swaps refuse partial fills and anything over 2% price impact vs the top of book (fair-price guard) |
 | `frontend/lib/kuruData.ts` | Kuru public REST (candles, trades, 24h stats) and on-chain `getL2Book` |
-| `frontend/lib/vault.ts` | AES-GCM encrypted burner-key storage for session resume |
+| `frontend/lib/vault.ts` | Non-secret per-wallet hints: active session index, exited-burner counter, signature-determinism check |
 | `frontend/lib/chain.ts` | viem clients (`cacheTime: 0`), Monad 3-block pacing and gas padding |
 | `frontend/lib/privacy.ts` | Privacy score and checks |
 | `frontend/lib/relay.ts`, `frontend/app/api/relay/route.ts` | Relayer client and server route (gas drip, withdrawal relay) |
@@ -188,7 +188,7 @@ The 8 contract tests cover: deployment and pool registration, ERC20 deposit (com
 - Kuru testnet liquidity is thin, so spot charts are mostly flat.
 - On the local fork, the book and chart show live testnet data while trades execute against the fork's snapshot, so displayed and executed prices can differ.
 - The ASP approves every deposit; there is no deposit screening yet.
-- A burner's key lives only in this browser (encrypted). Clearing site data mid-session loses that session's funds; the private balance itself is always recoverable from the wallet signature.
+- Everything private derives from one wallet signature: a site that tricks you into signing the exact ShadowTrade message could derive your keys. Wallets show the requesting site for every signature; only sign it on ShadowTrade.
 - Spending several notes in one withdrawal sends one relayed transaction per note, so the split is visible on-chain.
 
 ## Next steps

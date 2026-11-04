@@ -123,7 +123,7 @@ function EnterStealth({ app, venue, busy }: { app: ShadowTrade; venue: Venue; bu
           <SummaryRow label="Gas" value="0.5 MON, paid by the relayer" />
           <SummaryRow label="Your wallet" value="never touches the burner" />
         </dl>
-        <p className="text-[11px] leading-snug text-muted">Saved encrypted on this device · erased when you exit</p>
+        <p className="text-[11px] leading-snug text-muted">Burner key re-derives from your wallet signature, so the session can be resumed on any device</p>
         <div className="grid grid-cols-2 gap-2">
           <button onClick={() => setConfirming(false)} className="h-10 rounded-md border border-border text-[13px] text-muted transition-colors hover:border-border-strong hover:text-text">
             Back
@@ -206,7 +206,7 @@ function Onboarding({ app, wallet, venue, busy }: { app: ShadowTrade; wallet: Wa
         </StepRow>
         <StepRow n={2} title="Unlock private balance" done={unlocked} active={current === 2} summary="Unlocked">
           <p className="mb-2.5 text-xs leading-relaxed text-muted">
-            {app.resumable ? "You have a stealth session in progress on this device." : "Sign a free message to derive your private key on this device. No transaction."}
+            {app.resumable ? "You have a stealth session in progress on this device." : "Sign a free message to derive your private keys on this device. No transaction. It also finds any unfinished session."}
           </p>
           <PrimaryButton onClick={app.unlock}>{app.resumable ? "Sign to resume session" : "Sign to unlock"}</PrimaryButton>
         </StepRow>
@@ -320,7 +320,7 @@ function AccountCard({ app, session }: { app: ShadowTrade; session: StealthSessi
         <AccountRow label="Available" value={data ? `${usd(num(data.free))} AUSD` : null} />
         <AccountRow label="Margin in use" value={data ? `${usd(num(data.margin))} AUSD` : null} />
         <AccountRow label="Unrealized PnL" value={data ? `${pnl > 0 ? "+" : pnl < 0 ? "-" : ""}${usd(Math.abs(pnl))} AUSD` : null} tone={pnlTone} />
-        <AccountRow label="Session size" value={`${session.bucket.toLocaleString()} ${TOKENS[session.venue].symbol}`} />
+        <AccountRow label="Session size" value={session.bucket ? `${session.bucket.toLocaleString()} ${TOKENS[session.venue].symbol}` : "Recovered"} />
         <AccountRow label="Burner gas" value={data ? `${gasMon.toLocaleString(undefined, { maximumFractionDigits: 3 })} MON` : null} />
       </dl>
     </section>

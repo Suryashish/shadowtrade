@@ -1,71 +1,58 @@
-import { bytesToHex, hexToBytes, type Address, type Hex } from "viem";
+import { concat, keccak256, toHex, type Address, type Hex } from "viem";
 import type { Venue } from "./config";
 
 /**
- * Keeps an active session's burner key on this device, encrypted with a key only the user's
- * wallet signature can re-derive, so a refresh or crash never strands funds in a burner.
- * It is written before any funds move and deleted when the session exits.
+ * Per-wallet hints on this device. None are secret: burner keys re-derive from the wallet
+ * signature (keys.ts), so losing this storage only costs a chain scan on the next unlock.
  */
 
-type StoredSession = { v: 1; iv: Hex; ct: Hex; venue: Venue; bucket: number; startedAt: number };
+export type VaultSession = { index: number; venue: Venue; bucket: number; startedAt: number };
 
-export type VaultSession = { burnerKey: Hex; venue: Venue; bucket: number; startedAt: number };
+type Stored = { v: 2; session: VaultSession | null; exitedThrough: number; signatureHash: Hex | null };
 
-const storageKey = (shadow: Address) => `shadowtrade:session:${shadow.toLowerCase()}`;
+const storageKey = (main: Address) => `shadowtrade:wallet:${main.toLowerCase()}`;
+const EMPTY: Stored = { v: 2, session: null, exitedThrough: 0, signatureHash: null };
 
-// WebCrypto wants ArrayBuffer-backed views; copying gives a fresh, non-shared buffer.
-const bytes = (hex: Hex) => new Uint8Array(hexToBytes(hex));
-
-async function aesKey(vaultSecret: Hex) {
-  return crypto.subtle.importKey("raw", bytes(vaultSecret), "AES-GCM", false, ["encrypt", "decrypt"]);
-}
-
-export async function saveSession(shadow: Address, vaultSecret: Hex, s: VaultSession) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aesKey(vaultSecret), bytes(s.burnerKey));
-  const record: StoredSession = { v: 1, iv: bytesToHex(iv), ct: bytesToHex(new Uint8Array(ct)), venue: s.venue, bucket: s.bucket, startedAt: s.startedAt };
-  // Throws if storage is unavailable; callers must not move funds without this backup.
-  localStorage.setItem(storageKey(shadow), JSON.stringify(record));
-}
-
-export async function loadSession(shadow: Address, vaultSecret: Hex): Promise<VaultSession | null> {
-  let raw: string | null;
+function read(main: Address): Stored {
   try {
-    raw = localStorage.getItem(storageKey(shadow));
+    const raw = localStorage.getItem(storageKey(main));
+    const stored = raw ? (JSON.parse(raw) as Stored) : null;
+    return stored?.v === 2 ? stored : EMPTY;
   } catch {
-    return null;
-  }
-  if (!raw) return null;
-  const record = JSON.parse(raw) as StoredSession;
-  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes(record.iv) }, await aesKey(vaultSecret), bytes(record.ct));
-  return { burnerKey: bytesToHex(new Uint8Array(pt)), venue: record.venue, bucket: record.bucket, startedAt: record.startedAt };
-}
-
-export function clearSession(shadow: Address) {
-  try {
-    localStorage.removeItem(storageKey(shadow));
-  } catch {
-    // Nothing stored.
+    return EMPTY;
   }
 }
 
-// A non-secret marker per main wallet, so the UI can say "you have a session to resume" before
-// the user signs (the encrypted record itself is keyed by the shadow address, unknown until then).
-const markerKey = (main: Address) => `shadowtrade:active:${main.toLowerCase()}`;
-
-export function markSessionActive(main: Address, active: boolean) {
+function update(main: Address, patch: Partial<Stored>) {
   try {
-    if (active) localStorage.setItem(markerKey(main), "1");
-    else localStorage.removeItem(markerKey(main));
+    localStorage.setItem(storageKey(main), JSON.stringify({ ...read(main), ...patch }));
   } catch {
-    // Only drives a hint.
+    // Storage blocked: everything here can be rebuilt from the chain.
   }
 }
 
-export function hasSessionToResume(main: Address): boolean {
-  try {
-    return localStorage.getItem(markerKey(main)) === "1";
-  } catch {
-    return false;
-  }
+export const loadSession = (main: Address) => read(main).session;
+export const saveSession = (main: Address, session: VaultSession) => update(main, { session });
+export const hasSessionToResume = (main: Address) => read(main).session !== null;
+
+/** Burners up to this index are known to be exited and empty, so recovery scans start after it. */
+export const exitedThrough = (main: Address) => read(main).exitedThrough;
+
+export function clearSession(main: Address, exitedIndex: number) {
+  update(main, { session: null, exitedThrough: Math.max(read(main).exitedThrough, exitedIndex) });
 }
+
+/**
+ * Every key derives from one signature, so the wallet must sign deterministically (RFC 6979).
+ * The first unlock on a device signs twice and compares; later unlocks compare against a hash.
+ * Returns whether this signature can be trusted, or null when a second signature is needed.
+ */
+export function checkSignature(main: Address, signature: Hex): boolean | null {
+  const known = read(main).signatureHash;
+  return known === null ? null : known === signatureCheck(signature);
+}
+
+export const rememberSignature = (main: Address, signature: Hex) => update(main, { signatureHash: signatureCheck(signature) });
+
+// Domain-separated: a plain keccak of the signature is a derived private key (keys.ts).
+const signatureCheck = (signature: Hex) => keccak256(concat([signature, toHex("shadowtrade:signature-check:v1")]));

@@ -81,7 +81,7 @@ function SessionDetails({ session }: { session: StealthSession }) {
         </Row>
         <Row label="Venue">{session.venue === "perpl" ? "Perpl perps" : "Kuru spot"}</Row>
         <Row label="Session size">
-          {session.bucket.toLocaleString()} {token.symbol}
+          {session.bucket ? `${session.bucket.toLocaleString()} ${token.symbol}` : "Recovered"}
         </Row>
         <Row label="Gas left">{gas.data === null ? "…" : `${Number(formatEther(gas.data)).toFixed(3)} MON`}</Row>
         <Row label="Running for">{elapsed}</Row>

@@ -1,7 +1,7 @@
-import { erc20Abi, parseUnits, type Address } from "viem";
+import { erc20Abi, parseUnits, type Address, type Hex } from "viem";
 import { noteFunded, publicClient, sendValue } from "./chain";
-import { RELAYER_ADDRESS, SPOT_MARKETS, TOKENS, type Venue } from "./config";
-import { createBurner, type Burner } from "./keys";
+import { POOL_MIN_DEPOSIT, RELAYER_ADDRESS, SPOT_MARKETS, TOKENS, type Venue } from "./config";
+import { deriveBurner, type Burner } from "./keys";
 import * as kuru from "./kuru";
 import * as perpl from "./perpl";
 import type { MasterKeys } from "./notes";
@@ -14,6 +14,7 @@ export type OnStep = (step: Step) => void;
 export type StealthSession = {
   burner: Burner;
   venue: Venue;
+  /** Session size in whole tokens; 0 for a session recovered from the chain (size unknown). */
   bucket: number;
   startedAt: number;
 };
@@ -33,7 +34,44 @@ async function tokenBalance(token: Address, owner: Address) {
   return publicClient.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [owner] });
 }
 
+/** Where a used burner still holds funds, if anywhere: an unfinished session to resume and exit. */
+async function heldVenue(address: Address, perpMarkets: perpl.PerpMarket[]): Promise<Venue | null> {
+  const dust = (venue: Venue) => parseUnits(String(POOL_MIN_DEPOSIT), TOKENS[venue].decimals);
+  const [account, ausd, usdc, kuruId] = await Promise.all([
+    perpl.getAccount(address),
+    tokenBalance(TOKENS.perpl.address, address),
+    tokenBalance(TOKENS.kuru.address, address),
+    kuru.accountId(address),
+  ]);
+  if (ausd >= dust("perpl") || (account && account.balanceCNS > 0n)) return "perpl";
+  if (account && (await Promise.all(perpMarkets.map((m) => perpl.getPosition(m.id, account.id)))).some(Boolean)) return "perpl";
+  if (usdc >= dust("kuru")) return "kuru";
+  if (kuruId !== 0) {
+    const held = await Promise.all([TOKENS.kuru.address, ...SPOT_MARKETS.map((m) => m.baseToken)].map((t) => kuru.balanceOf(kuruId, t)));
+    if (held.some((b) => b > 0n)) return "kuru";
+  }
+  return null;
+}
+
+/**
+ * Walks this wallet's burners after `exitedThrough` (known exited): returns the first that still
+ * holds funds as a session to resume, or else the first never-used index for a new session.
+ * A used burner is never reused, since that would link two sessions.
+ */
+export async function scanBurners(seed: Hex, exitedThrough: number, perpMarkets: perpl.PerpMarket[]): Promise<{ next: number; unfinished: StealthSession | null }> {
+  for (let index = exitedThrough + 1; ; index++) {
+    const burner = deriveBurner(seed, index);
+    const [nonce, gas] = await Promise.all([publicClient.getTransactionCount({ address: burner.address }), publicClient.getBalance({ address: burner.address })]);
+    // Brand-new: also what the relayer requires before it sends gas.
+    if (nonce === 0 && gas === 0n) return { next: index, unfinished: null };
+    const venue = await heldVenue(burner.address, perpMarkets);
+    if (venue) return { next: index + 1, unfinished: { burner, venue, bucket: 0, startedAt: Date.now() } };
+  }
+}
+
 export async function enterStealth(opts: {
+  /** The burner for this session: a never-used index from scanBurners. */
+  burner: Burner;
   keys: MasterKeys;
   venue: Venue;
   bucket: number;
@@ -47,7 +85,7 @@ export async function enterStealth(opts: {
   const step = stepper(4, opts.onStep);
 
   step("Creating a fresh burner wallet");
-  const session: StealthSession = { burner: createBurner(), venue: opts.venue, bucket: opts.bucket, startedAt: Date.now() };
+  const session: StealthSession = { burner: opts.burner, venue: opts.venue, bucket: opts.bucket, startedAt: Date.now() };
   await opts.onSession?.(session);
   const { burner } = session;
 

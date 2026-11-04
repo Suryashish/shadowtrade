@@ -7,13 +7,13 @@ import { createWalletClient, erc20Abi, formatUnits, http, isAddressEqual, parseA
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { publicClient } from "../lib/chain";
 import { monadTestnet, PRIVACY_POOLS, RELAYER_ADDRESS, RPC_URL, SPOT_MARKETS, TOKENS, VENUES } from "../lib/config";
-import { masterKeysFromSignature, shadowKeyMessage } from "../lib/keys";
+import { burnerSeedFromSignature, deriveBurner, masterKeysFromSignature, shadowKeyMessage } from "../lib/keys";
 import * as kuru from "../lib/kuru";
 import { planWithdrawal, proveWithdrawal, recoverNotes, relayWithdrawal } from "../lib/notes";
 import * as perpl from "../lib/perpl";
 import { depositToPool, fetchPoolState, privateBalance, withdrawFromPool } from "../lib/pool";
 import { relay } from "../lib/relay";
-import { ensureExitGas, enterStealth, exitStealth } from "../lib/session";
+import { ensureExitGas, enterStealth, exitStealth, scanBurners } from "../lib/session";
 
 const RELAY = process.env.RELAY_URL ?? "http://localhost:3000";
 // anvil's default account #0, funded by fork-setup.sh
@@ -71,12 +71,21 @@ async function main_() {
   assert.equal((await privateBalance(stranger, "perpl", RELAY)).spendable, 0n);
   log("✓ another user's keys see none of these notes");
 
-  console.log("\n2. Perps session on Perpl (burner funded by a ZK withdrawal)");
+  const burnerSeed = burnerSeedFromSignature(signature);
+  assert.equal(deriveBurner(burnerSeed, 7).address, deriveBurner(burnerSeedFromSignature(signature), 7).address, "burners must re-derive identically");
   const markets = await perpl.fetchPerpMarkets();
+  // As the app does: the first never-used burner. Earlier runs' exited burners are skipped, not reused.
+  const nextBurner = async () => {
+    const { next, unfinished } = await scanBurners(burnerSeed, 0, markets);
+    assert.equal(unfinished, null, "no unfinished session expected");
+    return deriveBurner(burnerSeed, next);
+  };
+
+  console.log("\n2. Perps session on Perpl (burner funded by a ZK withdrawal)");
   const eth = markets.find((m) => m.symbol === "ETH")!;
   const btc = markets.find((m) => m.symbol === "BTC")!;
   const t0 = Date.now();
-  const perpSession = await enterStealth({ keys, venue: "perpl", bucket: 1000, relayBase: RELAY, onStep: (s) => log(`[${s.index}/${s.total}] ${s.label}`) });
+  const perpSession = await enterStealth({ burner: await nextBurner(), keys, venue: "perpl", bucket: 1000, relayBase: RELAY, onStep: (s) => log(`[${s.index}/${s.total}] ${s.label}`) });
   log(`✓ stealth ready in ${((Date.now() - t0) / 1000).toFixed(1)}s, burner ${perpSession.burner.address}`);
   const account = await perpl.getAccount(perpSession.burner.address);
   assert.equal(account?.balanceCNS, parseUnits("1000", 6));
@@ -116,11 +125,33 @@ async function main_() {
   assert.ok(returned > parseUnits("990", 6), `returned ${fmt(returned)} should be ~1000 minus fees`);
   log(`✓ returned ${fmt(returned)} AUSD to private balance`);
 
+  console.log("\n2b. Recovering a session after the device's data is lost");
+  const lost = await enterStealth({ burner: await nextBurner(), keys, venue: "perpl", bucket: 500, relayBase: RELAY });
+  assert.ok(lost.burner.index > perpSession.burner.index && lost.burner.address !== perpSession.burner.address, "each session gets a new burner");
+  const lostAccount = (await perpl.getAccount(lost.burner.address))!;
+  await perpl.openPosition(lost.burner.wallet, eth, "long", perpl.lotsFor(eth, parseUnits("100", 6), 2, await perpl.getMarkPrice(eth.id)), 2);
+  // Forget everything local; only the wallet signature remains.
+  const recoveredSeed = burnerSeedFromSignature(await main.signMessage({ message: shadowKeyMessage(mainAddr) }));
+  const { unfinished } = await scanBurners(recoveredSeed, 0, markets);
+  assert.equal(unfinished?.burner.address, lost.burner.address, "the scan must find the unfinished session's burner");
+  assert.equal(unfinished?.venue, "perpl");
+  assert.ok(await perpl.getPosition(eth.id, lostAccount.id), "its position is still open");
+  log(`✓ re-derived unfinished burner #${unfinished!.burner.index} ${unfinished!.burner.address} from the signature alone`);
+  const beforeRecovery = (await privateBalance(keys, "perpl", RELAY)).spendable;
+  const rescued = await exitStealth({ session: unfinished!, keys, perpMarkets: markets, relayBase: RELAY });
+  assert.ok(rescued > parseUnits("495", 6), `rescued ${fmt(rescued)} of 500`);
+  assert.equal((await privateBalance(keys, "perpl", RELAY)).spendable, beforeRecovery + rescued);
+  log(`✓ exited the recovered session: ${fmt(rescued)} AUSD back in the private balance`);
+  const after = await scanBurners(recoveredSeed, 0, markets);
+  assert.equal(after.unfinished, null, "an exited burner is not reported again");
+  assert.equal(after.next, unfinished!.burner.index + 1, "the next session gets a never-used burner");
+  log(`✓ next session would use new burner #${after.next} ${deriveBurner(recoveredSeed, after.next).address}`);
+
   const sessions = [perpSession];
   if (VENUES.includes("kuru")) {
     console.log("\n3. Spot session on Kuru");
     const weth = SPOT_MARKETS[0];
-    const spot = await enterStealth({ keys, venue: "kuru", bucket: 500, relayBase: RELAY });
+    const spot = await enterStealth({ burner: await nextBurner(), keys, venue: "kuru", bucket: 500, relayBase: RELAY });
     const q = await kuru.swap(spot.burner.wallet, weth, true, parseUnits("40", 6));
     const id = await kuru.accountId(spot.burner.address);
     assert.ok((await kuru.balanceOf(id, weth.baseToken)) > 0n);
